@@ -34,6 +34,25 @@ web/                    фронтенд: index.html, style.css, app.js (чис�
 `game_over` / `error` / `opponent_left`. Вся валидация (расстановка, ходы,
 повторные выстрелы) — на сервере, клиенту нельзя доверять.
 
+## Боевой сервер
+
+Игра развёрнута на `printlab3d.ru`:
+
+- адрес: **https://printlab3d.ru/sea/** (дубль: https://sea.printlab3d.ru — заработает после распространения DNS)
+- Go-приложение: `/opt/sea-battle` (бинарник + `web/`), systemd-сервис `sea-battle`,
+  слушает `127.0.0.1:8090`
+- nginx: HTTPS (Let's Encrypt, certbot с nginx-аутентификатором), прокси `/sea/` → Go,
+  HTTP редиректит на HTTPS; поддержка WebSocket через `Upgrade`
+- приложение умеет работать и в корне, и под префиксом `/sea/` (срезает префикс само)
+
+Обновление игры:
+
+```bash
+GOOS=linux GOARCH=amd64 go build -o sea-battle .
+scp sea-battle web/* root@СЕРВЕР:/tmp/   # затем разложить по /opt/sea-battle
+ssh root@СЕРВЕР 'systemctl restart sea-battle'
+```
+
 ## Тесты
 
 ```bash
