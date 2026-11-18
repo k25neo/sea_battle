@@ -1,0 +1,220 @@
+:root {
+  --bg: #0b1626;
+  --panel: #12233b;
+  --line: #2b4363;
+  --water: #16324f;
+  --water2: #1a3a5c;
+  --text: #dbe7f3;
+  --accent: #4db2ff;
+  --hit: #ff5d5d;
+  --ok: #58d68d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+}
+
+h1 { margin: 0 0 24px; font-weight: 600; letter-spacing: 1px; }
+h3 { margin: 0 0 10px; font-weight: 500; color: var(--accent); }
+
+.hidden { display: none !important; }
+
+.screen { width: 100%; max-width: 980px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.side { max-width: 260px; }
+
+label { display: block; margin-bottom: 16px; }
+
+input {
+  background: var(--water);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 15px;
+  width: 100%;
+}
+
+input:focus { outline: none; border-color: var(--accent); }
+
+.row { display: flex; gap: 10px; margin-top: 12px; }
+
+button {
+  background: var(--water2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 15px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #04101e;
+  font-weight: 600;
+}
+
+.hint { font-size: 13px; opacity: 0.7; }
+
+.status {
+  text-align: center;
+  margin-bottom: 16px;
+  font-size: 16px;
+  min-height: 24px;
+}
+
+.status b { color: var(--accent); letter-spacing: 2px; }
+
+.opp { font-size: 13px; opacity: 0.7; font-weight: 400; }
+
+.boards {
+  display: flex;
+  gap: 28px;
+  justify-content: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/* ---------- Игровые поля ---------- */
+
+.board {
+  display: grid;
+  grid-template-columns: 22px repeat(10, 34px);
+  grid-template-rows: 22px repeat(10, 34px);
+  gap: 2px;
+  user-select: none;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+.cell {
+  background: var(--water);
+  border-radius: 3px;
+  position: relative;
+}
+
+#enemy-board.clickable .cell { cursor: crosshair; }
+#enemy-board.clickable .cell:hover { outline: 1px solid var(--accent); }
+
+.cell.ship { background: #6f8ba8; box-shadow: inset 0 0 0 1px #9db8d4; }
+
+.cell.miss::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7ea6cc;
+}
+
+.cell.hit::after, .cell.sunk::after {
+  content: "✕";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hit);
+  font-weight: 700;
+}
+
+.cell.hit, .cell.sunk { background: #4a1f28; }
+.cell.sunk { background: #571f1f; }
+
+.cell.area::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #587c9e;
+  opacity: 0.8;
+}
+
+.cell.preview { background: #2e6b4d; }
+.cell.preview-bad { background: #6b2e2e; }
+
+/* ---------- Остаток флота ---------- */
+
+.fleet-left { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+
+.fship { display: flex; gap: 2px; opacity: 0.35; }
+.fship i {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  background: #6f8ba8;
+}
+
+.fship.next { opacity: 1; }
+.fship.next i { background: var(--accent); }
+.fship.done { opacity: 0.15; }
+
+/* ---------- Оверлей и тост ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 12, 24, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--hit);
+  color: var(--text);
+  padding: 10px 18px;
+  border-radius: 8px;
+  z-index: 11;
+}
+
+@media (max-width: 760px) {
+  .board {
+    grid-template-columns: 18px repeat(10, minmax(26px, 8vw));
+    grid-template-rows: 18px repeat(10, minmax(26px, 8vw));
+  }
+}

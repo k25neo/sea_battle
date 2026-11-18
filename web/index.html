@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Морской бой</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>⚓ Морской бой</h1>
+
+  <!-- Экран меню -->
+  <section id="screen-menu" class="screen">
+    <div class="panel">
+      <label>Ваше имя:
+        <input id="name-input" maxlength="16" placeholder="Игрок">
+      </label>
+      <div class="row">
+        <button id="btn-create" class="primary">Создать комнату</button>
+      </div>
+      <div class="row">
+        <input id="join-code" maxlength="5" placeholder="Код комнаты" autocomplete="off">
+        <button id="btn-join">Присоединиться</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Экран расстановки -->
+  <section id="screen-placement" class="screen hidden">
+    <div class="status">
+      Комната: <b id="room-code"></b> · <span id="placement-status">Ожидание второго игрока…</span>
+    </div>
+    <div class="boards">
+      <div>
+        <h3>Ваше поле</h3>
+        <div id="place-board" class="board"></div>
+      </div>
+      <div class="panel side">
+        <div id="fleet-left" class="fleet-left"></div>
+        <div class="row">
+          <button id="btn-rotate">Повернуть (R)</button>
+          <button id="btn-random">Случайно</button>
+        </div>
+        <div class="row">
+          <button id="btn-clear">Очистить</button>
+        </div>
+        <div class="row">
+          <button id="btn-ready" class="primary" disabled>В бой!</button>
+        </div>
+        <p class="hint">Клик — поставить корабль, клик по кораблю — убрать</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Экран боя -->
+  <section id="screen-battle" class="screen hidden">
+    <div class="status" id="battle-status">…</div>
+    <div class="boards">
+      <div>
+        <h3>Ваше поле <span class="opp" id="opp-name-own"></span></h3>
+        <div id="my-board" class="board"></div>
+      </div>
+      <div>
+        <h3>Поле противника <span class="opp" id="opp-name-enemy"></span></h3>
+        <div id="enemy-board" class="board clickable"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Финал -->
+  <div id="overlay" class="overlay hidden">
+    <div class="panel">
+      <h2 id="overlay-title"></h2>
+      <p id="overlay-text"></p>
+      <button id="btn-again" class="primary">В главное меню</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

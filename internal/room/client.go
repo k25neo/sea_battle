@@ -1,0 +1,194 @@
+package room
+
+import (
+	"encoding/json"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+const (
+	writeWait      = 10 * time.Second
+	sendBufferSize = 32
+	maxMsgSize     = 64 << 10 // 64 КБ более чем достаточно
+)
+
+// Client — WebSocket-соединение одного игрока.
+type Client struct {
+	conn   *websocket.Conn
+	send   chan []byte
+	closed sync.Once
+
+	room *Room
+	side int
+}
+
+func newClient(conn *websocket.Conn) *Client {
+	return &Client{conn: conn, send: make(chan []byte, sendBufferSize)}
+}
+
+// Serve запускает чтение и запись, блокирует до закрытия соединения.
+func (m *Manager) Serve(conn *websocket.Conn) {
+	c := newClient(conn)
+	go c.writePump()
+	c.readPump(m)
+}
+
+func (c *Client) sendJSON(v any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	select {
+	case c.send <- data:
+	default: // буфер переполнен — клиент «завис», закрываем
+		c.close()
+	}
+}
+
+func (c *Client) close() {
+	c.closed.Do(func() {
+		close(c.send)
+	})
+}
+
+func (c *Client) writePump() {
+	for data := range c.send {
+		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+		if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			break
+		}
+	}
+	c.conn.Close()
+}
+
+func (c *Client) readPump(m *Manager) {
+	defer func() {
+		if c.room != nil {
+			c.room.removePlayer(c, m)
+		}
+		c.close()
+	}()
+	c.conn.SetReadLimit(maxMsgSize)
+	for {
+		_, data, err := c.conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		c.handle(m, data)
+	}
+}
+
+// handle — маршрутизация входящих сообщений.
+// create/join обрабатываются до присоединения к комнате (c.room == nil).
+func (c *Client) handle(m *Manager, data []byte) {
+	var env struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &env); err != nil {
+		c.sendJSON(errorMsg{Type: "error", Message: "некорректное сообщение"})
+		return
+	}
+
+	switch env.Type {
+	case "create":
+		if c.room != nil {
+			return
+		}
+		var msg createMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return
+		}
+		r := m.Create()
+		side, err := r.addPlayer(c, sanitizeName(msg.Name))
+		if err != nil {
+			m.remove(r.code)
+			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
+			return
+		}
+		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side})
+
+	case "join":
+		if c.room != nil {
+			return
+		}
+		var msg joinMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return
+		}
+		r, err := m.Join(sanitizeCode(msg.Code))
+		if err != nil {
+			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
+			return
+		}
+		side, err := r.addPlayer(c, sanitizeName(msg.Name))
+		if err != nil {
+			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
+			return
+		}
+		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side})
+		// Сообщаем обоим имена друг друга.
+		r.mu.Lock()
+		first, second := r.players[0], r.players[1]
+		first.c.sendJSON(opponentMsg{Type: "opponent", Name: second.name})
+		second.c.sendJSON(opponentMsg{Type: "opponent", Name: first.name})
+		r.mu.Unlock()
+
+	case "place":
+		if c.room == nil {
+			return
+		}
+		var msg placeMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			c.sendJSON(errorMsg{Type: "error", Message: "некорректная расстановка"})
+			return
+		}
+		c.room.handlePlace(c, msg)
+
+	case "fire":
+		if c.room == nil {
+			return
+		}
+		var msg fireMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return
+		}
+		c.room.handleFire(c, msg)
+
+	default:
+		c.sendJSON(errorMsg{Type: "error", Message: "неизвестный тип сообщения"})
+	}
+}
+
+func sanitizeName(name string) string {
+	out := make([]rune, 0, 16)
+	for _, r := range name {
+		if len(out) >= 16 {
+			break
+		}
+		switch {
+		case r >= 'а' && r <= 'я', r >= 'А' && r <= 'Я',
+			r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9', r == '-', r == '_':
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return "Игрок"
+	}
+	return string(out)
+}
+
+func sanitizeCode(code string) string {
+	out := make([]byte, 0, 8)
+	for i := 0; i < len(code); i++ {
+		ch := code[i]
+		if (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			out = append(out, ch)
+		} else if ch >= 'a' && ch <= 'z' {
+			out = append(out, ch-32)
+		}
+	}
+	return string(out)
+}
