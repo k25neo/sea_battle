@@ -220,6 +220,29 @@ function randomFleet() {
 
 // ---------- Бой ----------
 
+function appendChat(name, text, own) {
+  const box = $('chat-box');
+  const row = document.createElement('div');
+  row.className = 'chat-line' + (own ? ' own' : '');
+  const n = document.createElement('b');
+  n.textContent = name + ': ';
+  const t = document.createElement('span');
+  t.textContent = text; // textContent — никакой вставки HTML
+  row.appendChild(n);
+  row.appendChild(t);
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+}
+
+function sendChat() {
+  const inp = $('chat-input');
+  const text = inp.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'chat', text }));
+  inp.value = '';
+  inp.focus();
+}
+
 function onEnemyClick(x, y) {
   if (phase !== 'battle' || !myTurn) return;
   if (enemyMarks[key(x, y)]) return;
@@ -292,6 +315,7 @@ function handleMessage(msg) {
         myMarks = {};
         enemyMarks = {};
         showOpponent('');
+        $('chat-box').innerHTML = '';
         $('open-rooms').classList.add('hidden');
         setPlacementStatus(quickMatch ? 'Ищем соперника…' : 'Ожидание второго игрока…');
         showScreen('placement');
@@ -324,6 +348,7 @@ function handleMessage(msg) {
         phase = 'battle';
         myMarks = {};
         enemyMarks = {};
+        $('chat-box').innerHTML = '';
         buildBoard($('my-board'), false);
         buildBoard($('enemy-board'), true);
         showScreen('battle');
@@ -342,6 +367,10 @@ function handleMessage(msg) {
       }
       break;
     }
+
+    case 'chat':
+      appendChat(msg.name, msg.text, msg.own);
+      break;
 
     case 'opponent_off':
       flashToast('Связь с соперником оборвалась, ждём возврата…');
@@ -415,6 +444,7 @@ function applySnapshot(msg) {
     mergeArea(enemyMarks, msg.enemyArea);
     myTurn = msg.youTurn;
     phase = 'battle';
+    $('chat-box').innerHTML = ''; // историю пришлют следом отдельными chat
     buildBoard($('my-board'), false);
     buildBoard($('enemy-board'), true);
     showScreen('battle');
@@ -602,6 +632,14 @@ $('btn-again').onclick = () => {
   saveSession(null);
   location.reload();
 };
+
+$('btn-send').onclick = sendChat;
+$('chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    sendChat();
+  }
+});
 
 document.addEventListener('keydown', (e) => {
   if (phase === 'placement' && !fleetSent &&

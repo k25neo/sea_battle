@@ -102,6 +102,65 @@ func TestFindSkipsPrivateAndDead(t *testing.T) {
 	}
 }
 
+func TestChat(t *testing.T) {
+	m := NewManager()
+	r := m.Create()
+	a, b := testClient(), testClient()
+	r.addPlayer(a, "А")
+	r.addPlayer(b, "Б")
+	r.handlePlace(a, placeMsg{Fleet: testFleet()})
+
+	r.handleChat(a, chatMsg{Type: "chat", Text: "  Привет, играй честно  "})
+	own := waitFor(t, a, "chat")
+	if own["own"] != true || own["name"] != "А" || own["text"] != "Привет, играй честно" {
+		t.Errorf("эхо отправителю: %v", own)
+	}
+	theirs := waitFor(t, b, "chat")
+	if theirs["own"] != false || theirs["name"] != "А" {
+		t.Errorf("сопернику: %v", theirs)
+	}
+
+	// Антифлуд: мгновенное повторное сообщение отклоняется.
+	r.handleChat(a, chatMsg{Type: "chat", Text: "ещё-ещё"})
+	if _, ok := drain(a, "chat"); ok {
+		t.Error("второе сообщение в окне rate-limit не должно проходить")
+	}
+	if _, ok := drain(b, "chat"); ok {
+		t.Error("итоговое сообщение не должно дойти сопернику")
+	}
+
+	// Обрыв и возврат: история чата восстановлена.
+	r.detach(a)
+	a2 := testClient()
+	data, _ := json.Marshal(rejoinMsg{Type: "rejoin", Token: r.players[0].token})
+	a2.handle(m, data)
+	waitFor(t, a2, "room")
+	waitFor(t, a2, "snapshot")
+	replayed := waitFor(t, a2, "chat")
+	if replayed["text"] != "Привет, играй честно" || replayed["own"] != true {
+		t.Errorf("история чата не восстановилась: %v", replayed)
+	}
+}
+
+// drain возвращает первое сообщение типа typ из буфера, если оно там есть.
+func drain(c *Client, typ string) (map[string]any, bool) {
+	for {
+		select {
+		case data, ok := <-c.send:
+			if !ok {
+				return nil, false
+			}
+			var m map[string]any
+			json.Unmarshal(data, &m)
+			if m["type"] == typ {
+				return m, true
+			}
+		default:
+			return nil, false
+		}
+	}
+}
+
 func cell(x, y int) game.Cell { return game.Cell{X: x, Y: y} }
 
 func testFleet() [][]game.Cell {

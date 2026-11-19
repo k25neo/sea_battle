@@ -117,3 +117,11 @@ type openRoomsMsg struct {
 	Type string     `json:"type"` // rooms
 	Open []OpenRoom `json:"open"`
 }
+
+// chatMsg — сообщение чата комнаты. Own=true для самого отправителя.
+type chatMsg struct {
+	Type string `json:"type"` // chat
+	Name string `json:"name"`
+	Text string `json:"text"`
+	Own  bool   `json:"own"`
+}

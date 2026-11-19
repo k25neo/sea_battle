@@ -182,6 +182,7 @@ func (c *Client) handle(m *Manager, data []byte) {
 		p := r.players[c.side]
 		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: c.side, Token: c.token})
 		c.sendJSON(r.snapshot(p))
+		r.replayChat(p)
 		if other := r.opponentOf(p); other != nil && other.c != nil {
 			other.c.sendJSON(backMsg{Type: "opponent_back"})
 		}
@@ -207,6 +208,16 @@ func (c *Client) handle(m *Manager, data []byte) {
 			return
 		}
 		c.room.handleFire(c, msg)
+
+	case "chat":
+		if c.room == nil {
+			return
+		}
+		var msg chatMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return
+		}
+		c.room.handleChat(c, msg)
 
 	default:
 		c.sendJSON(errorMsg{Type: "error", Message: "неизвестный тип сообщения"})

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,11 +31,12 @@ var (
 
 // player — участник комнаты; переживает обрыв соединения.
 type player struct {
-	name  string
-	board *game.Board
-	ready bool
-	token string
-	c     *Client // nil, если связь оборвалась
+	name     string
+	board    *game.Board
+	ready    bool
+	token    string
+	c        *Client // nil, если связь оборвалась
+	lastChat time.Time
 }
 
 // Room — комната на двух игроков с общим состоянием партии.
@@ -51,6 +53,20 @@ type Room struct {
 
 	grace *time.Timer // ждём возвращения отключившегося
 	ttl   *time.Timer // чистим пустую/завершённую комнату
+
+	chat []chatEntry // история чата (для восстановления при rejoin)
+}
+
+const (
+	chatMaxLen    = 300
+	chatHistory   = 50
+	chatRateLimit = 500 * time.Millisecond
+)
+
+type chatEntry struct {
+	from int
+	name string
+	text string
 }
 
 // Code возвращает код комнаты для приглашения второго игрока.
@@ -321,6 +337,58 @@ func (r *Room) handleFire(c *Client, msg fireMsg) {
 			pl.c.sendJSON(startMsg{Type: "start", YouTurn: r.turn == i})
 		}
 	}
+}
+
+// handleChat принимает сообщение чата и рассылает его обоим игрокам.
+func (r *Room) handleChat(c *Client, msg chatMsg) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state != statePlacing && r.state != statePlaying {
+		return
+	}
+	p := r.players[c.side]
+	text := sanitizeChat(msg.Text)
+	if text == "" || time.Since(p.lastChat) < chatRateLimit {
+		return // пусто или антифлуд
+	}
+	p.lastChat = time.Now()
+	r.chat = append(r.chat, chatEntry{from: c.side, name: p.name, text: text})
+	if len(r.chat) > chatHistory {
+		r.chat = r.chat[len(r.chat)-chatHistory:]
+	}
+	for _, pl := range r.players {
+		if pl != nil && pl.c != nil {
+			pl.c.sendJSON(chatMsg{Type: "chat", Name: p.name, Text: text, Own: pl.c == c})
+		}
+	}
+}
+
+// replayChat отправляет историю чата переподключившемуся игроку.
+func (r *Room) replayChat(p *player) {
+	if p.c == nil {
+		return
+	}
+	side := r.sideOf(p)
+	for _, e := range r.chat {
+		p.c.sendJSON(chatMsg{Type: "chat", Name: e.name, Text: e.text, Own: e.from == side})
+	}
+}
+
+func sanitizeChat(s string) string {
+	out := make([]rune, 0, chatMaxLen)
+	for _, ch := range s {
+		if ch == '\n' || ch == '\r' || ch == '\t' {
+			ch = ' '
+		}
+		if ch < 0x20 {
+			continue
+		}
+		out = append(out, ch)
+		if len(out) == chatMaxLen {
+			break
+		}
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // snapshot собирает полную картину для переподключившегося игрока.
