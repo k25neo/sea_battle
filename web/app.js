@@ -402,6 +402,12 @@ function handleMessage(msg) {
       showOverlay('Соперник отключился', 'Игра прервана.');
       break;
 
+    case 'replaced':
+      // Тот же бой открыли ещё раз — старое окно уступает дорогу новому.
+      giveUp('Игра открыта в другом окне',
+             'Эта вкладка передала управление новой. Если это были вы — просто играйте там.');
+      break;
+
     case 'error':
       if (rejoinPending) {
         rejoinPending = false;

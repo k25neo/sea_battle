@@ -125,3 +125,9 @@ type chatMsg struct {
 	Text string `json:"text"`
 	Own  bool   `json:"own"`
 }
+
+// replacedMsg — слот перехвачен новым соединением (та же сессия открыта
+// ещё раз). Прежнее соединение должно сдаться, а не лезть обратно.
+type replacedMsg struct {
+	Type string `json:"type"` // replaced
+}

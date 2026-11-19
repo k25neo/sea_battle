@@ -185,7 +185,10 @@ func (r *Room) rejoin(c *Client, token string) (int, error) {
 	for i, p := range r.players {
 		if p != nil && p.token == token {
 			if p.c != nil && p.c != c {
-				p.c.close() // прежнее соединение живёт в другой вкладке — закрываем
+				// Прежнее соединение живёт в другой вкладке — честно
+				// предупреждаем его, что слот перехвачен, и только потом рвём.
+				p.c.sendJSON(replacedMsg{Type: "replaced"})
+				p.c.close()
 			}
 			p.c = c
 			r.attach(c, i)
