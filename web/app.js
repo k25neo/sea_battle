@@ -45,6 +45,14 @@ let enemyMarks = {};   // 'x,y' -> miss|hit|sunk|area — мои выстрел�
 const $ = (id) => document.getElementById(id);
 const key = (x, y) => x + ',' + y;
 
+// Вход по ссылке вида …?room=КОД — гость играет без ручного ввода кода.
+const inviteCode = (function () {
+  const p = new URLSearchParams(location.search).get('room');
+  if (p) history.replaceState(null, '', location.pathname); // неjoining на reload
+  return p ? p.trim().toUpperCase() : null;
+})();
+let joinViaLink = false;
+
 // ---------- Построение полей ----------
 
 function buildBoard(container, clickable) {
@@ -273,6 +281,9 @@ function handleMessage(msg) {
       stopReconnect();
       saveSession({ token: msg.token, code: msg.code });
       $('room-code').textContent = msg.code;
+      // Ссылка-приглашение для соперника.
+      $('invite-link').value = location.origin + location.pathname + '?room=' + msg.code;
+      if (navigator.share) $('btn-share').classList.remove('hidden');
       if (phase !== 'battle') {
         phase = 'placement';
         fleetSent = false;
@@ -355,6 +366,13 @@ function handleMessage(msg) {
       if (rejoinPending) {
         rejoinPending = false;
         sessionGone();
+        break;
+      }
+      if (joinViaLink) {
+        joinViaLink = false;
+        showScreen('menu');
+        $('join-code').value = inviteCode || '';
+        flashToast(msg.message + ' — попробуйте ввести код вручную');
         break;
       }
       flashToast(msg.message);
@@ -504,6 +522,29 @@ function flashToast(text) {
 
 // ---------- Кнопки ----------
 
+$('btn-copy').onclick = async () => {
+  const link = $('invite-link').value;
+  try {
+    await navigator.clipboard.writeText(link);
+    flashToast('Ссылка скопирована');
+  } catch (e) {
+    // fallback для старых браузеров
+    const el = $('invite-link');
+    el.select();
+    document.execCommand('copy');
+    flashToast('Ссылка скопирована');
+  }
+};
+
+$('btn-share').onclick = () => {
+  const link = $('invite-link').value;
+  navigator.share({
+    title: 'Морской бой',
+    text: `Заходи в бой, код комнаты ${(session && session.code) || $('room-code').textContent}:`,
+    url: link,
+  }).catch(() => {});
+};
+
 $('btn-create').onclick = () => {
   const name = $('name-input').value.trim() || 'Игрок';
   connect({ type: 'create', name });
@@ -564,9 +605,13 @@ buildBoard($('enemy-board'), true);
 showScreen('menu');
 
 // Если вкладка пережила перезагрузку (телефон «выбросил» страницу) —
-// сразу пробуем вернуться в комнату.
+// сразу пробуем вернуться в комнату. Если открыта ссылка-приглашение —
+// гость входит в комнату автоматически.
 if (session && session.token) {
   connect({ type: 'rejoin', token: session.token });
+} else if (inviteCode) {
+  joinViaLink = true;
+  connect({ type: 'join', code: inviteCode, name: 'Игрок' });
 } else {
   showScreen('menu');
 }
