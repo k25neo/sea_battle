@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"seabattle/internal/game"
@@ -217,6 +218,7 @@ func (r *Room) handlePlace(c *Client, msg placeMsg) {
 	// Оба готовы — начинаем бой; первым ходит игрок 0.
 	r.state = statePlaying
 	r.turn = 0
+	r.m.gamesStarted.Add(1)
 	for i, pl := range r.players {
 		if pl.c != nil {
 			pl.c.sendJSON(startMsg{Type: "start", YouTurn: r.turn == i})
@@ -265,6 +267,7 @@ func (r *Room) handleFire(c *Client, msg fireMsg) {
 
 	if defender.board.AllSunk() {
 		r.state = stateFinished
+		r.m.gamesFinished.Add(1)
 		shooter.c.sendJSON(gameOverMsg{Type: "game_over", YouWon: true})
 		if defender.c != nil {
 			defender.c.sendJSON(gameOverMsg{Type: "game_over", YouWon: false})
@@ -323,11 +326,15 @@ func toMarks(ms []game.Mark) []markMsg {
 type Manager struct {
 	mu    sync.Mutex
 	rooms map[string]*Room
+
+	startedAt     time.Time
+	gamesStarted  atomic.Int64 // партии, в которых оба были готовы
+	gamesFinished atomic.Int64 // партии, доигранные до победы
 }
 
 // NewManager создаёт пустой менеджер комнат.
 func NewManager() *Manager {
-	return &Manager{rooms: make(map[string]*Room)}
+	return &Manager{rooms: make(map[string]*Room), startedAt: time.Now()}
 }
 
 const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -410,4 +417,48 @@ func (m *Manager) remove(code string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.rooms, code)
+}
+
+// Stats — живая сводка для страницы и админения.
+type Stats struct {
+	Waiting       int   `json:"waiting"`       // комнат ждут второго игрока
+	Placing       int   `json:"placing"`       // комнат на расстановке
+	Playing       int   `json:"playing"`       // активных боёв
+	PlayersOnline int   `json:"playersOnline"` // подключённых игроков
+	GamesStarted  int64 `json:"gamesStarted"`  // партий начато с запуска сервера
+	GamesFinished int64 `json:"gamesFinished"` // партий доиграно до победы
+	UptimeSec     int64 `json:"uptimeSec"`
+}
+
+// Stats собирает текущее состояние реестра комнат.
+func (m *Manager) Stats() Stats {
+	s := Stats{
+		GamesStarted:  m.gamesStarted.Load(),
+		GamesFinished: m.gamesFinished.Load(),
+		UptimeSec:     int64(time.Since(m.startedAt).Seconds()),
+	}
+	m.mu.Lock()
+	rooms := make([]*Room, 0, len(m.rooms))
+	for _, r := range m.rooms {
+		rooms = append(rooms, r)
+	}
+	m.mu.Unlock()
+	for _, r := range rooms {
+		r.mu.Lock()
+		switch r.state {
+		case stateWaiting:
+			s.Waiting++
+		case statePlacing:
+			s.Placing++
+		case statePlaying:
+			s.Playing++
+		}
+		for _, p := range r.players {
+			if p != nil && p.c != nil {
+				s.PlayersOnline++
+			}
+		}
+		r.mu.Unlock()
+	}
+	return s
 }

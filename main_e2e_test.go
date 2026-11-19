@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,43 @@ func TestE2ESubPathPrefix(t *testing.T) {
 		}
 	}
 	t.Fatal("нет ответа на create через /sea/ws")
+}
+
+// Эндпоинт статистики показывает живых игроков и комнаты.
+func TestE2EStatsEndpoint(t *testing.T) {
+	m := room.NewManager()
+	srv := httptest.NewServer(newServer(m))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var empty map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&empty); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if empty["playersOnline"].(float64) != 0 {
+		t.Errorf("на старте онлайн 0, получено %v", empty["playersOnline"])
+	}
+
+	a := dial(t, srv.URL)
+	send(t, a, map[string]any{"type": "create", "name": "Стат"})
+	readUntil(t, a, "room")
+
+	resp, err = http.Get(srv.URL + "/api/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var s map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		t.Fatal(err)
+	}
+	if s["playersOnline"].(float64) != 1 || s["waiting"].(float64) != 1 {
+		t.Errorf("ожидается 1 игрок и 1 комната ожидания: %v", s)
+	}
 }
 
 func c(x, y int) map[string]any { return map[string]any{"x": x, "y": y} }

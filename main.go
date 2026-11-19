@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -27,6 +28,11 @@ func newServer(m *room.Manager) http.Handler {
 			return
 		}
 		m.Serve(conn)
+	})
+	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(m.Stats())
 	})
 	fileServer := http.FileServer(http.Dir("web"))
 	mux.Handle("/", fileServer)

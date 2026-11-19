@@ -597,6 +597,20 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ---------- Статистика сервера ----------
+
+async function loadStats() {
+  try {
+    const resp = await fetch(new URL('api/stats', location.href).href);
+    const s = await resp.json();
+    const parts = [`👥 ${s.playersOnline} в сети`, `⚔️ боёв сейчас: ${s.playing}`];
+    if (s.gamesFinished > 0) parts.push(`сыграно партий: ${s.gamesFinished}`);
+    $('stats-line').textContent = parts.join(' · ');
+  } catch (e) {
+    $('stats-line').textContent = '';
+  }
+}
+
 // ---------- Старт ----------
 
 setupPlacement();
@@ -615,3 +629,6 @@ if (session && session.token) {
 } else {
   showScreen('menu');
 }
+
+loadStats();
+setInterval(loadStats, 30000);
