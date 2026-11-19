@@ -307,7 +307,8 @@ function handleMessage(msg) {
       $('room-code').textContent = msg.code;
       // Ссылка-приглашение для соперника.
       $('invite-link').value = location.origin + location.pathname + '?room=' + msg.code;
-      if (navigator.share || window.VKBridge) $('btn-share').classList.remove('hidden');
+        // Мост может быть подложен как vk-bridge.min.js, так и хостом ВК.
+      if (navigator.share || bridge()) $('btn-share').classList.remove('hidden');
       if (phase !== 'battle') {
         phase = 'placement';
         fleetSent = false;
@@ -728,11 +729,19 @@ async function loadMenuRooms() {
 
 let inVK = false;
 
+// Официальная сборка @vkontakte/vk-bridge даёт window.vkBridge;
+// исторически хост ВК подкладывал window.VKBridge — поддерживаем оба.
+function bridge() {
+  const b = window.vkBridge || window.VKBridge;
+  return b && typeof b.send === 'function' ? b : null;
+}
+
 function vk(feature, params) {
   return new Promise((resolve) => {
     try {
-      if (window.VKBridge && typeof VKBridge.send === "function") {
-        VKBridge.send(feature, params || {})
+      const b = bridge();
+      if (b) {
+        b.send(feature, params || {})
           .then(resolve)
           .catch(() => resolve(null));
       } else {
@@ -745,7 +754,7 @@ function vk(feature, params) {
 }
 
 async function initVK() {
-  const hasBridge = !!(window.VKBridge && typeof VKBridge.send === 'function');
+  const hasBridge = !!bridge();
   const ok = await vk("VKWebAppInit");
   // Телеметрия состояния моста: сервер пишет запрос в access-лог.
   try {
