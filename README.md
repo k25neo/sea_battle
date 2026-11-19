@@ -30,9 +30,16 @@ web/                    фронтенд: index.html, style.css, app.js (чис�
 ```
 
 Протокол — JSON поверх WebSocket. Клиент шлёт `create` / `join` / `place` /
-`fire`, сервер отвечает `room` / `opponent` / `placed` / `start` / `shot` /
-`game_over` / `error` / `opponent_left`. Вся валидация (расстановка, ходы,
+`fire` / `rejoin`, сервер отвечает `room` / `opponent` / `placed` / `start` /
+`shot` / `snapshot` / `game_over` / `error` / `opponent_off` /
+`opponent_back` / `opponent_left`. Вся валидация (расстановка, ходы,
 повторные выстрелы) — на сервере, клиенту нельзя доверять.
+
+Мобильные браузеры рвут WebSocket при сворачивании, поэтому игрок
+переживает обрыв: у него есть токен сессии (хранится в sessionStorage),
+комната после потери связи живёт ещё несколько минут (5 мин в бою, 15 мин
+в лобби), а при возврате браузер сам переподключается (`rejoin`) и
+восстанавливает весь экран из `snapshot`.
 
 ## Боевой сервер
 

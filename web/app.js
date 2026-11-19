@@ -3,12 +3,35 @@
 const SIZE = 10;
 const SIZES = [4, 3, 3, 2, 2, 2, 1, 1, 1, 1];
 const LETTERS = 'АБВГДЕЖЗИК';
+const SS_KEY = '***'; // сессия: переживает перезагрузку вкладки
 
 let ws = null;
 let side = -1;
 let oppName = '';
 let myTurn = false;
 let phase = 'menu'; // menu | placement | battle
+
+// Сессия игрока {token, code} — по ней сервер пускает обратно в комнату
+// после обрыва (телефон рвёт WebSocket, когда браузер сворачивают).
+let session = null;
+try { session = JSON.parse(sessionStorage.getItem(SS_KEY) || 'null'); } catch (e) {}
+
+function saveSession(s) {
+  session = s;
+  if (s) sessionStorage.setItem(SS_KEY, JSON.stringify(s));
+  else sessionStorage.removeItem(SS_KEY);
+}
+
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+let rejoinPending = false;
+const MAX_RECONNECTS = 40;
+
+function stopReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnectAttempts = 0;
+}
 
 // --- Расстановка ---
 let ships = [];        // [{sizeIdx, cells}]
@@ -217,7 +240,10 @@ function renderBoards() {
 function markShot(marks, msg) {
   if (msg.sunk) {
     for (const c of msg.cells) marks[key(c.x, c.y)] = 'sunk';
-    for (const c of msg.area) marks[key(c.x, c.y)] = 'area';
+    for (const c of msg.area) {
+      const k = key(c.x, c.y);
+      if (!marks[k]) marks[k] = 'area';
+    }
   } else {
     marks[key(msg.x, msg.y)] = msg.hit ? 'hit' : 'miss';
   }
@@ -227,32 +253,54 @@ function setStatus(text) {
   $('battle-status').textContent = text;
 }
 
+function setPlacementStatus(text) {
+  $('placement-status').textContent = text;
+}
+
+function showOpponent(name) {
+  oppName = name || '';
+  $('opp-name-own').textContent = oppName ? `(${oppName})` : '';
+  $('opp-name-enemy').textContent = oppName ? `(${oppName})` : '';
+}
+
 // ---------- Сообщения сервера ----------
 
 function handleMessage(msg) {
   switch (msg.type) {
     case 'room':
       side = msg.side;
+      rejoinPending = false;
+      stopReconnect();
+      saveSession({ token: msg.token, code: msg.code });
       $('room-code').textContent = msg.code;
-      phase = 'placement';
-      fleetSent = false;
-      ships = [];
-      myMarks = {};
-      enemyMarks = {};
-      oppName = '';
-      $('placement-status').textContent = 'Ожидание второго игрока…';
-      showScreen('placement');
-      renderPlaceBoard();
+      if (phase !== 'battle') {
+        phase = 'placement';
+        fleetSent = false;
+        ships = [];
+        myMarks = {};
+        enemyMarks = {};
+        showOpponent('');
+        setPlacementStatus('Ожидание второго игрока…');
+        showScreen('placement');
+        renderPlaceBoard();
+      }
       break;
+
     case 'opponent':
-      oppName = msg.name;
-      $('placement-status').textContent = `${msg.name} в сети — расставьте корабли`;
-      $('opp-name-own').textContent = `(${msg.name})`;
-      $('opp-name-enemy').textContent = `(${msg.name})`;
+      showOpponent(msg.name);
+      if (phase === 'placement' && !fleetSent) {
+        setPlacementStatus(`${msg.name} в сети — расставьте корабли`);
+      }
       break;
+
     case 'placed':
-      $('placement-status').textContent = 'Флот готов, ждём соперника…';
+      setPlacementStatus('Флот готов, ждём соперника…');
       break;
+
+    case 'snapshot':
+      applySnapshot(msg);
+      break;
+
     case 'start':
       if (phase !== 'battle') {
         phase = 'battle';
@@ -266,6 +314,7 @@ function handleMessage(msg) {
       setStatus(myTurn ? 'Ваш ход — стреляйте по полю противника' : `Ход ${oppName || 'соперника'}…`);
       renderBoards();
       break;
+
     case 'shot': {
       const myShot = msg.target === 'enemy';
       markShot(myShot ? enemyMarks : myMarks, msg);
@@ -275,16 +324,39 @@ function handleMessage(msg) {
       }
       break;
     }
+
+    case 'opponent_off':
+      flashToast('Связь с соперником оборвалась, ждём возврата…');
+      if (phase === 'placement') setPlacementStatus('Соперник отключился, ждём…');
+      if (phase === 'battle') setStatus('Соперник отключился, ждём до 5 минут…');
+      break;
+
+    case 'opponent_back':
+      flashToast('Соперник снова в сети');
+      if (phase === 'battle') setStatus(myTurn ? 'Ваш ход' : `Ход ${oppName || 'соперника'}…`);
+      break;
+
     case 'game_over':
       phase = 'menu';
+      stopReconnect();
+      saveSession(null);
       showOverlay(msg.youWon ? '🏆 Победа!' : '💥 Поражение',
         msg.youWon ? 'Весь флот противника потоплен.' : 'Ваш флот уничтожен.');
       break;
+
     case 'opponent_left':
       phase = 'menu';
+      stopReconnect();
+      saveSession(null);
       showOverlay('Соперник отключился', 'Игра прервана.');
       break;
+
     case 'error':
+      if (rejoinPending) {
+        rejoinPending = false;
+        sessionGone();
+        break;
+      }
       flashToast(msg.message);
       if (msg.message === 'сейчас не ваш ход') {
         myTurn = false;
@@ -293,9 +365,75 @@ function handleMessage(msg) {
   }
 }
 
+// Восстановление состояния после переподключения.
+function applySnapshot(msg) {
+  showOpponent(msg.opponent);
+  if (msg.phase === 'finished') {
+    phase = 'menu';
+    stopReconnect();
+    saveSession(null);
+    showOverlay('Игра завершена', 'Пока вы были offline, партия закончилась.');
+    return;
+  }
+  if (msg.phase === 'playing') {
+    // Восстанавливаем свои корабли (sizeIdx подбираем по длине).
+    const rebuilt = [];
+    for (const cells of msg.fleet || []) {
+      const idx = SIZES.findIndex(
+        (n, i) => n === cells.length && !rebuilt.some((s) => s.sizeIdx === i));
+      rebuilt.push({ sizeIdx: idx === -1 ? 0 : idx, cells });
+    }
+    ships = rebuilt;
+    myMarks = marksToObj(msg.board);
+    mergeArea(myMarks, msg.area);
+    enemyMarks = marksToObj(msg.enemy);
+    mergeArea(enemyMarks, msg.enemyArea);
+    myTurn = msg.youTurn;
+    phase = 'battle';
+    buildBoard($('my-board'), false);
+    buildBoard($('enemy-board'), true);
+    showScreen('battle');
+    renderBoards();
+    setStatus(myTurn ? 'Ваш ход — стреляйте по полю противника' : `Ход ${oppName || 'соперника'}…`);
+    return;
+  }
+  // waiting | placing
+  phase = 'placement';
+  fleetSent = !!msg.ready;
+  if (msg.fleet && msg.fleet.length) {
+    const rebuilt = [];
+    for (const cells of msg.fleet) {
+      const idx = SIZES.findIndex(
+        (n, i) => n === cells.length && !rebuilt.some((s) => s.sizeIdx === i));
+      rebuilt.push({ sizeIdx: idx === -1 ? 0 : idx, cells });
+    }
+    ships = rebuilt;
+  }
+  showScreen('placement');
+  renderPlaceBoard();
+  if (fleetSent) setPlacementStatus('Флот готов, ждём соперника…');
+  else setPlacementStatus(msg.opponent ? `${msg.opponent} в сети — расставьте корабли` : 'Ожидание второго игрока…');
+}
+
+function marksToObj(marks) {
+  const o = {};
+  for (const m of marks || []) {
+    o[key(m.x, m.y)] = m.sunk ? 'sunk' : m.hit ? 'hit' : 'miss';
+  }
+  return o;
+}
+
+function mergeArea(marks, area) {
+  for (const c of area || []) {
+    const k = key(c.x, c.y);
+    if (!marks[k]) marks[k] = 'area';
+  }
+}
+
 // ---------- Сеть ----------
 
 function connect(sendObj) {
+  rejoinPending = sendObj.type === 'rejoin';
   if (ws) {
     try { ws.close(); } catch (e) {}
   }
@@ -309,11 +447,36 @@ function connect(sendObj) {
     try { handleMessage(JSON.parse(e.data)); } catch (err) {}
   };
   ws.onclose = () => {
-    if (phase === 'battle' || phase === 'placement') {
-      phase = 'menu';
-      showOverlay('Соединение потеряно', 'Проверьте сеть и попробуйте снова.');
+    if (phase === 'menu' && !session) return;
+    if (session && session.token && reconnectAttempts < MAX_RECONNECTS) {
+      scheduleReconnect();
+    } else if (phase !== 'menu') {
+      giveUp('Соединение потеряно', 'Не удалось переподключиться. Начните новую игру.');
     }
   };
+}
+
+function scheduleReconnect() {
+  const delay = Math.min(1000 * Math.pow(1.6, reconnectAttempts), 8000);
+  reconnectAttempts++;
+  if (reconnectAttempts === 1) flashToast('Связь потеряна — переподключение…');
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    if (!session || !session.token) return;
+    connect({ type: 'rejoin', token: session.token });
+  }, delay);
+}
+
+function giveUp(title, text) {
+  phase = 'menu';
+  stopReconnect();
+  saveSession(null);
+  showOverlay(title, text);
+}
+
+// Сервер отказал в переподключении (комната удалена/игра закончилась).
+function sessionGone() {
+  giveUp('Игра не найдена', 'Сессия истекла — начните новую игру.');
 }
 
 // ---------- Экраны и прочее ----------
@@ -377,10 +540,11 @@ $('btn-ready').onclick = () => {
   }));
   fleetSent = true;
   renderPlaceBoard();
-  $('placement-status').textContent = 'Флот готов, ждём соперника…';
+  setPlacementStatus('Флот готов, ждём соперника…');
 };
 
 $('btn-again').onclick = () => {
+  saveSession(null);
   location.reload();
 };
 
@@ -398,3 +562,11 @@ setupPlacement();
 buildBoard($('my-board'), false);
 buildBoard($('enemy-board'), true);
 showScreen('menu');
+
+// Если вкладка пережила перезагрузку (телефон «выбросил» страницу) —
+// сразу пробуем вернуться в комнату.
+if (session && session.token) {
+  connect({ type: 'rejoin', token: session.token });
+} else {
+  showScreen('menu');
+}

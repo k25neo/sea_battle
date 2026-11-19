@@ -209,6 +209,41 @@ func halo(cells []Cell) []Cell {
 	return out
 }
 
+// Mark — отметка о выстреле для восстановления картины поля.
+type Mark struct {
+	X    int  `json:"x"`
+	Y    int  `json:"y"`
+	Hit  bool `json:"hit"`
+	Sunk bool `json:"sunk"`
+}
+
+// Report — снимок поля: расположение кораблей, все выстрелы и ореолы
+// вокруг потопленных. Используется для восстановления состояния при
+// переподключении игрока.
+func (b *Board) Report() (ships [][]Cell, marks []Mark, area []Cell) {
+	areaSet := make(map[Cell]bool)
+	for _, s := range b.ships {
+		ships = append(ships, s.Cells)
+		if s.Sunk() {
+			for _, c := range halo(s.Cells) {
+				areaSet[c] = true
+			}
+		}
+	}
+	for c := range b.shots {
+		m := Mark{X: c.X, Y: c.Y}
+		if s, ok := b.occupied[c]; ok {
+			m.Hit = true
+			m.Sunk = s.Sunk()
+		}
+		marks = append(marks, m)
+	}
+	for c := range areaSet {
+		area = append(area, c)
+	}
+	return ships, marks, area
+}
+
 // AllSunk возвращает true, если весь флот потоплен.
 func (b *Board) AllSunk() bool {
 	if len(b.ships) == 0 {

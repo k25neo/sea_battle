@@ -20,8 +20,9 @@ type Client struct {
 	send   chan []byte
 	closed sync.Once
 
-	room *Room
-	side int
+	room  *Room
+	side  int
+	token string // сессия игрока в комнате
 }
 
 func newClient(conn *websocket.Conn) *Client {
@@ -66,7 +67,7 @@ func (c *Client) writePump() {
 func (c *Client) readPump(m *Manager) {
 	defer func() {
 		if c.room != nil {
-			c.room.removePlayer(c, m)
+			c.room.detach(c)
 		}
 		c.close()
 	}()
@@ -107,7 +108,7 @@ func (c *Client) handle(m *Manager, data []byte) {
 			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
 			return
 		}
-		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side})
+		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side, Token: c.token})
 
 	case "join":
 		if c.room != nil {
@@ -127,12 +128,38 @@ func (c *Client) handle(m *Manager, data []byte) {
 			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
 			return
 		}
-		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side})
+		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side, Token: c.token})
 		// Сообщаем обоим имена друг друга.
 		r.mu.Lock()
 		first, second := r.players[0], r.players[1]
 		first.c.sendJSON(opponentMsg{Type: "opponent", Name: second.name})
 		second.c.sendJSON(opponentMsg{Type: "opponent", Name: first.name})
+		r.mu.Unlock()
+
+	case "rejoin":
+		if c.room != nil {
+			return
+		}
+		var msg rejoinMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return
+		}
+		r := m.ByToken(msg.Token)
+		if r == nil {
+			c.sendJSON(errorMsg{Type: "error", Message: "игра не найдена, начните новую"})
+			return
+		}
+		if _, err := r.rejoin(c, msg.Token); err != nil {
+			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
+			return
+		}
+		r.mu.Lock()
+		p := r.players[c.side]
+		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: c.side, Token: c.token})
+		c.sendJSON(r.snapshot(p))
+		if other := r.opponentOf(p); other != nil && other.c != nil {
+			other.c.sendJSON(backMsg{Type: "opponent_back"})
+		}
 		r.mu.Unlock()
 
 	case "place":

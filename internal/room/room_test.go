@@ -3,6 +3,7 @@ package room
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"seabattle/internal/game"
 )
@@ -163,6 +164,9 @@ func TestMissSwitchesTurn(t *testing.T) {
 }
 
 func TestOpponentLeftRemovesRoom(t *testing.T) {
+	battleGrace = 50 * time.Millisecond
+	defer func() { battleGrace = 5 * time.Minute }()
+
 	m := NewManager()
 	r := m.Create()
 	a, b := testClient(), testClient()
@@ -172,13 +176,117 @@ func TestOpponentLeftRemovesRoom(t *testing.T) {
 	r.handlePlace(b, placeMsg{Fleet: testFleet()})
 	waitFor(t, a, "start")
 
-	r.removePlayer(b, m)
-	waitFor(t, a, "opponent_left")
+	r.detach(b)
+	waitFor(t, a, "opponent_off") // сразу — «временный обрыв»
+	time.Sleep(150 * time.Millisecond)
+	waitFor(t, a, "opponent_left") // grace истёк — уход окончателен
 
 	m.mu.Lock()
 	_, exists := m.rooms[r.code]
 	m.mu.Unlock()
 	if exists {
 		t.Error("комната должна быть удалена после ухода игрока")
+	}
+}
+
+func TestRejoinDuringBattle(t *testing.T) {
+	battleGrace = 5 * time.Second // чтобы grace точно не истёк во время теста
+	defer func() { battleGrace = 5 * time.Minute }()
+
+	m := NewManager()
+	r := m.Create()
+	a, b := testClient(), testClient()
+	r.addPlayer(a, "A")
+	r.addPlayer(b, "B")
+	tokenA := r.players[0].token
+	r.handlePlace(a, placeMsg{Fleet: testFleet()})
+	r.handlePlace(b, placeMsg{Fleet: testFleet()})
+	waitFor(t, a, "start")
+
+	// A выстрелил и «свернул браузер».
+	c0 := shipCells()[0]
+	r.handleFire(a, fireMsg{X: c0.X, Y: c0.Y})
+	waitFor(t, a, "shot")
+	r.detach(a)
+	waitFor(t, b, "opponent_off")
+
+	// A возвращается по токену через новое соединение — как это делает
+	// браузер: сообщение rejoin через общий обработчик.
+	a2 := testClient()
+	data, err := json.Marshal(rejoinMsg{Type: "rejoin", Token: tokenA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2.handle(m, data)
+	waitFor(t, a2, "room")
+	snap := waitFor(t, a2, "snapshot")
+	if snap["phase"] != "playing" {
+		t.Fatalf("ожидался бой, получили %v", snap["phase"])
+	}
+	if snap["youTurn"] != true {
+		t.Error("ход должен остаться у A")
+	}
+	if snap["opponent"] != "B" {
+		t.Errorf("имя соперника: %v", snap["opponent"])
+	}
+	fleet, ok := snap["fleet"].([]any)
+	if !ok || len(fleet) != 10 {
+		t.Errorf("флот в снимке не восстановлен: %v", snap["fleet"])
+	}
+	marks, _ := snap["board"].([]any) // на поле A выстрелов ещё нет
+	if len(marks) != 0 {
+		t.Errorf("на поле A не должно быть выстрелов: %v", marks)
+	}
+	enemy, _ := snap["enemy"].([]any) // один выстрел A по полю B
+	if len(enemy) != 1 || enemy[0].(map[string]any)["hit"] != true {
+		t.Errorf("выстрел A не восстановлен: %v", enemy)
+	}
+	waitFor(t, b, "opponent_back")
+
+	// A может продолжать игру.
+	c1 := shipCells()[1]
+	r.handleFire(a2, fireMsg{X: c1.X, Y: c1.Y})
+	shot := waitFor(t, a2, "shot")
+	if shot["hit"] != true {
+		t.Error("выстрел после rejoin не работает")
+	}
+}
+
+// Гость потерял код-сессию (мессенджер открыл ссылку в новой вкладке) —
+// вход по коду возвращает его на его же место.
+func TestLobbyTakeoverByCode(t *testing.T) {
+	m := NewManager()
+	r := m.Create()
+	a, b := testClient(), testClient()
+	r.addPlayer(a, "A")
+	r.addPlayer(b, "B") // теперь state = placing
+	r.detach(b)         // связь с B оборвалась
+
+	if _, err := m.Join(r.code); err != nil {
+		t.Fatalf("войти по коду можно: %v", err)
+	}
+	b2 := testClient()
+	if side, err := r.addPlayer(b2, "B"); err != nil || side != 1 {
+		t.Fatalf("занять слот ушедшего: side=%d err=%v", side, err)
+	}
+	if r.players[1].c != b2 {
+		t.Error("новое соединение не привязано к слоту B")
+	}
+}
+
+func TestRejoinByCodeInLobby(t *testing.T) {
+	m := NewManager()
+	r := m.Create()
+	a := testClient()
+	r.addPlayer(a, "A")
+	r.detach(a) // телефон порвал связь, комната живёт по TTL
+
+	// Гость заходит по коду — должен получить место, а не «комната заполнена».
+	guest := testClient()
+	if _, err := m.Join(r.code); err != nil {
+		t.Fatalf("в комнату с отключившимся создателем можно войти: %v", err)
+	}
+	if side, err := r.addPlayer(guest, "G"); err != nil || side != 1 {
+		t.Fatalf("гость должен занять свободный слот: side=%d err=%v", side, err)
 	}
 }
