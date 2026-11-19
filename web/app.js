@@ -307,7 +307,7 @@ function handleMessage(msg) {
       $('room-code').textContent = msg.code;
       // Ссылка-приглашение для соперника.
       $('invite-link').value = location.origin + location.pathname + '?room=' + msg.code;
-      if (navigator.share) $('btn-share').classList.remove('hidden');
+      if (navigator.share || window.VKBridge) $('btn-share').classList.remove('hidden');
       if (phase !== 'battle') {
         phase = 'placement';
         fleetSent = false;
@@ -356,6 +356,7 @@ function handleMessage(msg) {
       myTurn = msg.youTurn;
       setStatus(myTurn ? 'Ваш ход — стреляйте по полю противника' : `Ход ${oppName || 'соперника'}…`);
       renderBoards();
+      vk("VKWebAppInterceptorsStart"); // бой идёт — закрывать только с подтверждением
       break;
 
     case 'shot': {
@@ -385,6 +386,7 @@ function handleMessage(msg) {
 
     case 'game_over':
       phase = 'menu';
+      vk("VKWebAppInterceptorsStop");
       stopReconnect();
       saveSession(null);
       showOverlay(msg.youWon ? '🏆 Победа!' : '💥 Поражение',
@@ -393,6 +395,7 @@ function handleMessage(msg) {
 
     case 'opponent_left':
       phase = 'menu';
+      vk("VKWebAppInterceptorsStop");
       stopReconnect();
       saveSession(null);
       showOverlay('Соперник отключился', 'Игра прервана.');
@@ -573,13 +576,22 @@ $('btn-copy').onclick = async () => {
   }
 };
 
-$('btn-share').onclick = () => {
+$('btn-share').onclick = async () => {
   const link = $('invite-link').value;
-  navigator.share({
-    title: 'Морской бой',
-    text: `Заходи в бой, код комнаты ${(session && session.code) || $('room-code').textContent}:`,
-    url: link,
-  }).catch(() => {});
+  const code = (session && session.code) || $('room-code').textContent;
+  if (inVK) {
+    vk("VKWebAppShare", { link }); // системный шаринг внутри ВК
+    return;
+  }
+  if (navigator.share) {
+    navigator.share({
+      title: 'Морской бой',
+      text: `Заходи в бой, код комнаты ${code}:`,
+      url: link,
+    }).catch(() => {});
+    return;
+  }
+  $('btn-copy').click();
 };
 
 $('btn-find').onclick = () => {
@@ -711,6 +723,44 @@ async function loadMenuRooms() {
   }
 }
 
+// ---------- VK Mini Apps ----------
+// Игра работает и вне ВК: если мост не отозвался — просто игнорируем.
+
+let inVK = false;
+
+function vk(feature, params) {
+  return new Promise((resolve) => {
+    try {
+      if (window.VKBridge && typeof VKBridge.send === "function") {
+        VKBridge.send(feature, params || {})
+          .then(resolve)
+          .catch(() => resolve(null));
+      } else {
+        resolve(null);
+      }
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+async function initVK() {
+  const ok = await vk("VKWebAppInit");
+  if (!ok) return false;
+  inVK = true;
+  vk("VKWebAppSetViewSettings", {
+    status_bar_style: "dark",
+    action_bar_color: "#0b1626",
+    navigation_bar_color: "#0b1626",
+  });
+  vk("VKWebAppDisableSwipeBack"); // назад свайпом — не из боя
+  const me = await vk("VKWebAppGetUserInfo");
+  if (me && me.first_name && !$("name-input").value) {
+    $("name-input").value = me.first_name;
+  }
+  return true;
+}
+
 // ---------- Статистика сервера ----------
 
 async function loadStats() {
@@ -748,6 +798,7 @@ loadStats();
 setInterval(loadStats, 30000);
 loadMenuRooms();
 setInterval(loadMenuRooms, 15000);
+initVK();
 
 // Пока ждём соперника в лобби — освежаем витрину открытых комнат.
 setInterval(() => {
