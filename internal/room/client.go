@@ -129,12 +129,36 @@ func (c *Client) handle(m *Manager, data []byte) {
 			return
 		}
 		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side, Token: c.token})
-		// Сообщаем обоим имена друг друга.
-		r.mu.Lock()
-		first, second := r.players[0], r.players[1]
-		first.c.sendJSON(opponentMsg{Type: "opponent", Name: second.name})
-		second.c.sendJSON(opponentMsg{Type: "opponent", Name: first.name})
-		r.mu.Unlock()
+		r.announceOpponents()
+
+	case "find":
+		if c.room != nil {
+			return
+		}
+		var msg createMsg // та же форма: {type, name}
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return
+		}
+		r := m.Find(c, sanitizeName(msg.Name))
+		if r == nil {
+			c.sendJSON(errorMsg{Type: "error", Message: "не удалось создать комнату"})
+			return
+		}
+		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: c.side, Token: c.token})
+		c.sendJSON(openRoomsMsg{Type: "rooms", Open: m.OpenRooms(r.code)})
+		r.announceOpponents()
+
+	case "list":
+		if c.room == nil {
+			return
+		}
+		c.room.mu.Lock()
+		exclude, playing := c.room.code, c.room.state >= statePlaying
+		c.room.mu.Unlock()
+		if playing {
+			return // в бою список не нужен
+		}
+		c.sendJSON(openRoomsMsg{Type: "rooms", Open: m.OpenRooms(exclude)})
 
 	case "rejoin":
 		if c.room != nil {

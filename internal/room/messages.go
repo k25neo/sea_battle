@@ -111,3 +111,9 @@ type rejoinMsg struct {
 	Type  string `json:"type"` // rejoin
 	Token string `json:"token"`
 }
+
+// openRoomsMsg — список открытых комнат быстрого подбора.
+type openRoomsMsg struct {
+	Type string     `json:"type"` // rooms
+	Open []OpenRoom `json:"open"`
+}

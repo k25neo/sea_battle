@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,10 +42,12 @@ type Room struct {
 	code string
 	m    *Manager
 
-	mu      sync.Mutex
-	state   int
-	players [2]*player // nil, если место свободно
-	turn    int        // чей ход (индекс в players)
+	mu        sync.Mutex
+	state     int
+	players   [2]*player // nil, если место свободно
+	turn      int        // чей ход (индекс в players)
+	public    bool       // открыта для быстрого подбора
+	createdAt time.Time
 
 	grace *time.Timer // ждём возвращения отключившегося
 	ttl   *time.Timer // чистим пустую/завершённую комнату
@@ -90,8 +93,7 @@ func (r *Room) addPlayer(c *Client, name string) (int, error) {
 	defer r.mu.Unlock()
 	for i, p := range r.players {
 		if p == nil {
-			r.players[i] = &player{name: name, board: game.NewBoard(), token: newToken(), c: c}
-			r.attach(c, i)
+			r.fillSlot(i, c, name)
 			if r.players[1-i] != nil {
 				r.state = statePlacing
 				r.stopTimers()
@@ -105,13 +107,51 @@ func (r *Room) addPlayer(c *Client, name string) (int, error) {
 	if r.state <= statePlacing {
 		for i, p := range r.players {
 			if p.c == nil {
-				r.players[i] = &player{name: name, board: game.NewBoard(), token: newToken(), c: c}
-				r.attach(c, i)
+				r.fillSlot(i, c, name)
 				return i, nil
 			}
 		}
 	}
 	return 0, errors.New("комната заполнена")
+}
+
+// fillSlot ставит нового игрока в слот (вызывать под r.mu).
+func (r *Room) fillSlot(i int, c *Client, name string) {
+	r.players[i] = &player{name: name, board: game.NewBoard(), token: newToken(), c: c}
+	r.attach(c, i)
+}
+
+// joinIfOpen пускает игрока быстрого подбора в открытую комнату, если та
+// ещё ждёт соперника и создатель на связи.
+func (r *Room) joinIfOpen(c *Client, name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.public || r.state != stateWaiting {
+		return false
+	}
+	if p := r.players[0]; p == nil || p.c == nil {
+		return false // создатель offline — не сажаем новичка в «мёртвую» комнату
+	}
+	for i, p := range r.players {
+		if p == nil {
+			r.fillSlot(i, c, name)
+			r.state = statePlacing
+			return true
+		}
+	}
+	return false
+}
+
+// announceOpponents сообщает обоим игрокам имена друг друга.
+func (r *Room) announceOpponents() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a, b := r.players[0], r.players[1]
+	if a == nil || b == nil || a.c == nil || b.c == nil {
+		return
+	}
+	a.c.sendJSON(opponentMsg{Type: "opponent", Name: b.name})
+	b.c.sendJSON(opponentMsg{Type: "opponent", Name: a.name})
 }
 
 func (r *Room) attach(c *Client, side int) {
@@ -351,8 +391,13 @@ func newCode() string {
 	return string(out)
 }
 
-// Create создаёт новую комнату и возвращает её код.
-func (m *Manager) Create() *Room {
+// Create создаёт приватную комнату (вход по ссылке/коду).
+func (m *Manager) Create() *Room { return m.create(false) }
+
+// CreatePublic создаёт комнату для быстрого подбора соперника.
+func (m *Manager) CreatePublic() *Room { return m.create(true) }
+
+func (m *Manager) create(public bool) *Room {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for {
@@ -360,10 +405,70 @@ func (m *Manager) Create() *Room {
 		if _, exists := m.rooms[code]; exists {
 			continue
 		}
-		r := &Room{code: code, m: m}
+		r := &Room{code: code, m: m, public: public, createdAt: time.Now()}
 		m.rooms[code] = r
 		return r
 	}
+}
+
+// Find ищет открытую комнату быстрого подбора (самую старую) и приводит
+// туда игрока; если таковых нет — создаёт новую публичную комнату.
+func (m *Manager) Find(c *Client, name string) *Room {
+	m.mu.Lock()
+	rooms := make([]*Room, 0, len(m.rooms))
+	for _, r := range m.rooms {
+		rooms = append(rooms, r)
+	}
+	m.mu.Unlock()
+	sort.Slice(rooms, func(i, j int) bool { return rooms[i].createdAt.Before(rooms[j].createdAt) })
+	for _, r := range rooms {
+		if r.joinIfOpen(c, name) {
+			return r
+		}
+	}
+	r := m.CreatePublic()
+	if _, err := r.addPlayer(c, name); err != nil {
+		return nil
+	}
+	return r
+}
+
+// OpenRoom — витрина открытых комнат для кнопки «Найти бой».
+type OpenRoom struct {
+	Code string `json:"code"`
+	Host string `json:"host"`
+}
+
+// OpenRooms перечисляет публичные комнаты, которые ещё ждут соперника
+// (связь создателя жива), исключая комнату exclude.
+func (m *Manager) OpenRooms(exclude string) []OpenRoom {
+	m.mu.Lock()
+	rooms := make([]*Room, 0, len(m.rooms))
+	for _, r := range m.rooms {
+		rooms = append(rooms, r)
+	}
+	m.mu.Unlock()
+	var out []OpenRoom
+	for _, r := range rooms {
+		if r.code == exclude {
+			continue
+		}
+		r.mu.Lock()
+		ok := r.public && r.state == stateWaiting
+		host := ""
+		if ok {
+			if p := r.players[0]; p != nil && p.c != nil {
+				host = p.name
+			} else {
+				ok = false
+			}
+		}
+		r.mu.Unlock()
+		if ok {
+			out = append(out, OpenRoom{Code: r.code, Host: host})
+		}
+	}
+	return out
 }
 
 // Join находит комнату с свободным местом (или отключившимся игроком в лобби).

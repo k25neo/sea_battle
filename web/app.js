@@ -37,6 +37,7 @@ function stopReconnect() {
 let ships = [];        // [{sizeIdx, cells}]
 let horizontal = true;
 let fleetSent = false;
+let quickMatch = false; // вход по «Найти бой» (публичная комната)
 
 // --- Бой ---
 let myMarks = {};      // 'x,y' -> miss|hit|sunk|area — выстрелы по мне
@@ -291,20 +292,27 @@ function handleMessage(msg) {
         myMarks = {};
         enemyMarks = {};
         showOpponent('');
-        setPlacementStatus('Ожидание второго игрока…');
+        $('open-rooms').classList.add('hidden');
+        setPlacementStatus(quickMatch ? 'Ищем соперника…' : 'Ожидание второго игрока…');
         showScreen('placement');
         renderPlaceBoard();
       }
       break;
 
+    case 'rooms':
+      if (phase === 'placement' && !fleetSent) renderOpenRooms(msg.open);
+      break;
+
     case 'opponent':
       showOpponent(msg.name);
+      $('open-rooms').classList.add('hidden');
       if (phase === 'placement' && !fleetSent) {
         setPlacementStatus(`${msg.name} в сети — расставьте корабли`);
       }
       break;
 
     case 'placed':
+      $('open-rooms').classList.add('hidden');
       setPlacementStatus('Флот готов, ждём соперника…');
       break;
 
@@ -545,8 +553,15 @@ $('btn-share').onclick = () => {
   }).catch(() => {});
 };
 
+$('btn-find').onclick = () => {
+  const name = $('name-input').value.trim() || 'Игрок';
+  quickMatch = true;
+  connect({ type: 'find', name });
+};
+
 $('btn-create').onclick = () => {
   const name = $('name-input').value.trim() || 'Игрок';
+  quickMatch = false;
   connect({ type: 'create', name });
 };
 
@@ -597,6 +612,36 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ---------- Открытые комнаты (быстрый подбор) ----------
+
+function renderOpenRooms(list) {
+  const box = $('open-rooms'), inner = $('open-rooms-list');
+  if (!list || !list.length) {
+    box.classList.add('hidden');
+    return;
+  }
+  box.classList.remove('hidden');
+  inner.innerHTML = '';
+  for (const r of list) {
+    const b = document.createElement('button');
+    b.textContent = `${r.code} · ${r.host}`;
+    b.onclick = () => leaveToJoin(r.code);
+    inner.appendChild(b);
+  }
+}
+
+// Уходим из своей комнаты в чужую (свой слот просто истечёт по таймауту).
+function leaveToJoin(code) {
+  stopReconnect();
+  saveSession(null);
+  phase = 'menu'; // чтобы onclose старого соединения ничего не показал
+  if (ws) {
+    try { ws.close(); } catch (e) {}
+  }
+  quickMatch = false;
+  connect({ type: 'join', code, name: $('name-input').value.trim() || 'Игрок' });
+}
+
 // ---------- Статистика сервера ----------
 
 async function loadStats() {
@@ -632,3 +677,11 @@ if (session && session.token) {
 
 loadStats();
 setInterval(loadStats, 30000);
+
+// Пока ждём соперника в лобби — освежаем витрину открытых комнат.
+setInterval(() => {
+  if (phase === 'placement' && !fleetSent && oppName === '' &&
+      ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'list' }));
+  }
+}, 10000);

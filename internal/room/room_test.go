@@ -34,6 +34,74 @@ func waitFor(t *testing.T, c *Client, typ string) map[string]any {
 	}
 }
 
+func TestFindMatchmaking(t *testing.T) {
+	m := NewManager()
+
+	// Первый «Найти бой» — своей комнаты нет, игрок ждёт в новой публичной.
+	a := testClient()
+	data, _ := json.Marshal(map[string]any{"type": "find", "name": "А"})
+	a.handle(m, data)
+	roomA := waitFor(t, a, "room")
+	waitFor(t, a, "rooms") // витрина открытых комнат
+
+	// Второй находит первую комнату и присоединяется.
+	b := testClient()
+	data, _ = json.Marshal(map[string]any{"type": "find", "name": "Б"})
+	b.handle(m, data)
+	roomB := waitFor(t, b, "room")
+	if roomA["code"] != roomB["code"] {
+		t.Fatal("оба должны оказаться в одной комнате")
+	}
+	if waitFor(t, a, "opponent")["name"] != "Б" {
+		t.Error("А должен увидеть имя Б")
+	}
+	if waitFor(t, b, "opponent")["name"] != "А" {
+		t.Error("Б должен увидеть имя А")
+	}
+
+	// Игра идёт как обычно.
+	r := m.rooms[roomA["code"].(string)]
+	r.handlePlace(a, placeMsg{Fleet: testFleet()})
+	r.handlePlace(b, placeMsg{Fleet: testFleet()})
+	start := waitFor(t, a, "start")
+	if start["youTurn"] != true {
+		t.Error("первым должен ходить тот, кто ждал (сторона 0)")
+	}
+}
+
+func TestFindSkipsPrivateAndDead(t *testing.T) {
+	m := NewManager()
+
+	// Приватная комната с полным составом дразнить не должна.
+	priv := m.Create()
+	pa, pb := testClient(), testClient()
+	priv.addPlayer(pa, "X")
+	priv.addPlayer(pb, "Y")
+
+	// Публичная, но создатель offline — тоже мимо.
+	dead := m.CreatePublic()
+	d := testClient()
+	dead.addPlayer(d, "D")
+	dead.detach(d)
+
+	a := testClient()
+	data, _ := json.Marshal(map[string]any{"type": "find", "name": "А"})
+	a.handle(m, data)
+	roomA := waitFor(t, a, "room")
+	if roomA["code"] == priv.code || roomA["code"] == dead.code {
+		t.Error("нельзя попадать в приватную или «мёртвую» комнату")
+	}
+	// Создатель жив — комната появится в витрине у следующего искателя.
+	b := testClient()
+	data, _ = json.Marshal(map[string]any{"type": "find", "name": "Б"})
+	b.handle(m, data)
+	// Б нашёл комнату А — коды совпадут.
+	roomB := waitFor(t, b, "room")
+	if roomB["code"] != roomA["code"] {
+		t.Error("живая публичная комната должна подбираться")
+	}
+}
+
 func cell(x, y int) game.Cell { return game.Cell{X: x, Y: y} }
 
 func testFleet() [][]game.Cell {

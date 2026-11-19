@@ -16,7 +16,10 @@
         <input id="name-input" maxlength="16" placeholder="Игрок">
       </label>
       <div class="row">
-        <button id="btn-create" class="primary">Создать комнату</button>
+        <button id="btn-find" class="primary">🔍 Найти бой</button>
+      </div>
+      <div class="row">
+        <button id="btn-create">Создать комнату с кодом</button>
       </div>
       <div class="row">
         <input id="join-code" maxlength="5" placeholder="Код комнаты" autocomplete="off">
@@ -43,6 +46,10 @@
             <button id="btn-copy">Копировать</button>
             <button id="btn-share" class="primary hidden">Поделиться</button>
           </div>
+        </div>
+        <div id="open-rooms" class="open-rooms hidden">
+          <div class="or-title">Свободные комнаты — можно войти:</div>
+          <div id="open-rooms-list"></div>
         </div>
         <div id="fleet-left" class="fleet-left"></div>
         <div class="row">

@@ -29,11 +29,16 @@ internal/room/          комнаты, игроки, состояние пар�
 web/                    фронтенд: index.html, style.css, app.js (чистый JS)
 ```
 
-Протокол — JSON поверх WebSocket. Клиент шлёт `create` / `join` / `place` /
-`fire` / `rejoin`, сервер отвечает `room` / `opponent` / `placed` / `start` /
-`shot` / `snapshot` / `game_over` / `error` / `opponent_off` /
-`opponent_back` / `opponent_left`. Вся валидация (расстановка, ходы,
-повторные выстрелы) — на сервере, клиенту нельзя доверять.
+Протокол — JSON поверх WebSocket. Клиент шлёт `create` / `find` / `join` /
+`place` / `fire` / `rejoin` / `list`, сервер отвечает `room` / `rooms` /
+`opponent` / `placed` / `start` / `shot` / `snapshot` / `game_over` /
+`error` / `opponent_off` / `opponent_back` / `opponent_left`. Вся валидация
+(расстановка, ходы, повторные выстрелы) — на сервере, клиенту нельзя
+доверять.
+
+Быстрый подбор: `find` приводит игрока в самую старую открытую публичную
+комнату, а если таковых нет — создаёт её; остальные искатели видят
+публичные комнаты в витрине `rooms` и могут войти в любую.
 
 Мониторинг: `GET /api/stats` — JSON с числом игроков онлайн, активных боёв
 и сыгранных партий; на главной эти числа показываются под формой входа.
