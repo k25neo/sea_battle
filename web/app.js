@@ -745,7 +745,14 @@ function vk(feature, params) {
 }
 
 async function initVK() {
+  const hasBridge = !!(window.VKBridge && typeof VKBridge.send === 'function');
   const ok = await vk("VKWebAppInit");
+  // Телеметрия состояния моста: сервер пишет запрос в access-лог.
+  try {
+    fetch(new URL('api/vkstat', location.href).href +
+          '?bridge=' + (hasBridge ? 1 : 0) + '&init=' + (ok ? 1 : 0) +
+          '&failed=' + (window.__vkScriptFailed ? 1 : 0));
+  } catch (e) {}
   if (!ok) return false;
   inVK = true;
   vk("VKWebAppSetViewSettings", {
@@ -755,6 +762,10 @@ async function initVK() {
   });
   vk("VKWebAppDisableSwipeBack"); // назад свайпом — не из боя
   const me = await vk("VKWebAppGetUserInfo");
+  try {
+    fetch(new URL('api/vkstat', location.href).href +
+          '?user=' + encodeURIComponent(me && me.first_name || 'null'));
+  } catch (e) {}
   if (me && me.first_name && !$("name-input").value) {
     $("name-input").value = me.first_name;
   }
