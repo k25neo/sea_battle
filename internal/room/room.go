@@ -27,6 +27,8 @@ var (
 	battleGrace = 5 * time.Minute // игрок пропал во время боя
 	lobbyTTL    = 15 * time.Minute
 	endCleanup  = 2 * time.Minute
+
+	turnTime = 30 * time.Second // время на ход; 0 — отключить часы
 )
 
 // player — участник комнаты; переживает обрыв соединения.
@@ -53,6 +55,8 @@ type Room struct {
 
 	grace *time.Timer // ждём возвращения отключившегося
 	ttl   *time.Timer // чистим пустую/завершённую комнату
+
+	turnTimer *time.Timer // ограничение на ход; nil, когда считать нечего
 
 	chat []chatEntry // история чата (для восстановления при rejoin)
 }
@@ -99,6 +103,64 @@ func (r *Room) stopTimers() {
 	if r.ttl != nil {
 		r.ttl.Stop()
 		r.ttl = nil
+	}
+	if r.turnTimer != nil {
+		r.turnTimer.Stop()
+		r.turnTimer = nil
+	}
+}
+
+// scheduleTurnTimer перезапускает песочные часы текущего хода.
+// Вызывается с захваченным r.mu.
+func (r *Room) scheduleTurnTimer() {
+	if r.turnTimer != nil {
+		r.turnTimer.Stop()
+		r.turnTimer = nil
+	}
+	if r.state != statePlaying || turnTime <= 0 {
+		return
+	}
+	r.turnTimer = time.AfterFunc(turnTime, r.onTurnTimeout)
+}
+
+// onTurnTimeout передаёт ход тому, кто не дождался соперника.
+func (r *Room) onTurnTimeout() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state != statePlaying {
+		return
+	}
+	r.turnTimer = nil
+	r.turn = 1 - r.turn
+	for i, p := range r.players {
+		if p != nil && p.c != nil {
+			p.c.sendJSON(timeoutMsg{Type: "timeout", YouTurn: r.turn == i})
+		}
+	}
+	r.scheduleTurnTimer()
+}
+
+// handleRematch начинает ту же пару заново: новые поля, расстановка.
+func (r *Room) handleRematch(c *Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state != stateFinished {
+		return
+	}
+	r.stopTimers()
+	r.state = statePlacing
+	r.turn = 0
+	r.chat = nil
+	for _, p := range r.players {
+		if p != nil {
+			p.board = game.NewBoard()
+			p.ready = false
+		}
+	}
+	for _, p := range r.players {
+		if p != nil && p.c != nil {
+			p.c.sendJSON(rematchMsg{Type: "rematch"})
+		}
 	}
 }
 
@@ -192,6 +254,9 @@ func (r *Room) rejoin(c *Client, token string) (int, error) {
 			}
 			p.c = c
 			r.attach(c, i)
+			if r.state == statePlaying {
+				r.scheduleTurnTimer() // продолжим бой — продолжим и часы
+			}
 			return i, nil
 		}
 	}
@@ -292,6 +357,7 @@ func (r *Room) tryStart() {
 			p.c.sendJSON(startMsg{Type: "start", YouTurn: r.turn == i})
 		}
 	}
+	r.scheduleTurnTimer()
 }
 
 // handleFire обрабатывает выстрел.
@@ -349,6 +415,7 @@ func (r *Room) handleFire(c *Client, msg fireMsg) {
 			pl.c.sendJSON(startMsg{Type: "start", YouTurn: r.turn == i})
 		}
 	}
+	r.scheduleTurnTimer()
 }
 
 // handleChat принимает сообщение чата и рассылает его обоим игрокам.

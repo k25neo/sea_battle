@@ -281,8 +281,39 @@ function markShot(marks, msg) {
   }
 }
 
+// ---------- Статус боя и часы хода ----------
+
+const TURN_SECONDS = 30; // совпадает с turnTime на сервере
+
+let statusBase = '';
+let turnDeadline = 0; // 0 — часы не тикают
+
 function setStatus(text) {
-  $('battle-status').textContent = text;
+  statusBase = text;
+  turnDeadline = 0;
+  renderStatus();
+}
+
+function setTurnClock() { // вызвать после смены myTurn
+  turnDeadline = myTurn && phase === 'battle'
+    ? Date.now() + TURN_SECONDS * 1000 : 0;
+  renderStatus();
+}
+
+function renderStatus() {
+  let t = statusBase;
+  if (turnDeadline && myTurn && phase === 'battle') {
+    const left = Math.ceil((turnDeadline - Date.now()) / 1000);
+    if (left > 0) t += ` · ⏳ ${left} с`;
+  }
+  $('battle-status').textContent = t;
+}
+
+setInterval(renderStatus, 500);
+
+// Тактильный отклик: попадание, гибель корабля, финал.
+function buzz(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
 }
 
 function setPlacementStatus(text) {
@@ -356,8 +387,18 @@ function handleMessage(msg) {
       }
       myTurn = msg.youTurn;
       setStatus(myTurn ? 'Ваш ход — стреляйте по полю противника' : `Ход ${oppName || 'соперника'}…`);
+      setTurnClock();
       renderBoards();
       vk("VKWebAppInterceptorsStart"); // бой идёт — закрывать только с подтверждением
+      break;
+
+    case 'timeout':
+      myTurn = msg.youTurn;
+      setStatus(myTurn ? 'Время вышло — соперник ждёт, стреляйте!'
+                       : `Ход ${oppName || 'соперника'}…`);
+      setTurnClock();
+      flashToast(myTurn ? 'Соперник замолчал — ход ваш' : 'Ваш ход истёк по времени');
+      buzz(myTurn ? 60 : [80, 60, 80]);
       break;
 
     case 'shot': {
@@ -366,6 +407,9 @@ function handleMessage(msg) {
       renderBoards();
       if (myShot) {
         setStatus(msg.hit ? 'Попадание! Стреляйте ещё' : 'Мимо…');
+        buzz(msg.sunk ? [90, 50, 90] : msg.hit ? 45 : 12);
+      } else if (msg.hit) {
+        buzz([130, 70, 130]); // по нам попали
       }
       break;
     }
@@ -377,21 +421,40 @@ function handleMessage(msg) {
     case 'opponent_off':
       flashToast('Связь с соперником оборвалась, ждём возврата…');
       if (phase === 'placement') setPlacementStatus('Соперник отключился, ждём…');
-      if (phase === 'battle') setStatus('Соперник отключился, ждём до 5 минут…');
+      if (phase === 'battle') { setStatus('Соперник отключился, ждём до 5 минут…'); setTurnClock(); }
       break;
 
     case 'opponent_back':
       flashToast('Соперник снова в сети');
-      if (phase === 'battle') setStatus(myTurn ? 'Ваш ход' : `Ход ${oppName || 'соперника'}…`);
+      if (phase === 'battle') { setStatus(myTurn ? 'Ваш ход' : `Ход ${oppName || 'соперника'}…`); setTurnClock(); }
       break;
 
     case 'game_over':
       phase = 'menu';
+      turnDeadline = 0;
       vk("VKWebAppInterceptorsStop");
       stopReconnect();
       saveSession(null);
       showOverlay(msg.youWon ? '🏆 Победа!' : '💥 Поражение',
-        msg.youWon ? 'Весь флот противника потоплен.' : 'Ваш флот уничтожен.');
+        msg.youWon ? 'Весь флот противника потоплен.' : 'Ваш флот уничтожен.',
+        ws && ws.readyState === WebSocket.OPEN); // комната жива ещё пару минут — можно реванш
+      buzz(msg.youWon ? 300 : [100, 80, 100, 80, 250]);
+      break;
+
+    case 'rematch':
+      phase = 'placement';
+      fleetSent = false;
+      ships = [];
+      myMarks = {};
+      enemyMarks = {};
+      turnDeadline = 0;
+      $('chat-box').innerHTML = '';
+      $('overlay').classList.add('hidden');
+      $('btn-rematch').disabled = false;
+      renderPlaceBoard();
+      setPlacementStatus('Реванш! Расставьте корабли');
+      $('open-rooms').classList.add('hidden');
+      showScreen('placement');
       break;
 
     case 'opponent_left':
@@ -460,6 +523,7 @@ function applySnapshot(msg) {
     showScreen('battle');
     renderBoards();
     setStatus(myTurn ? 'Ваш ход — стреляйте по полю противника' : `Ход ${oppName || 'соперника'}…`);
+    setTurnClock();
     return;
   }
   // waiting | placing
@@ -552,9 +616,11 @@ function showScreen(name) {
   }
 }
 
-function showOverlay(title, text) {
+function showOverlay(title, text, withRematch) {
   $('overlay-title').textContent = title;
   $('overlay-text').textContent = text;
+  $('btn-rematch').classList.toggle('hidden', !withRematch);
+  $('btn-again').classList.toggle('primary', !withRematch);
   $('overlay').classList.remove('hidden');
 }
 
@@ -650,6 +716,12 @@ $('btn-ready').onclick = () => {
 $('btn-again').onclick = () => {
   saveSession(null);
   location.reload();
+};
+
+$('btn-rematch').onclick = () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  $('btn-rematch').disabled = true;
+  ws.send(JSON.stringify({ type: 'rematch' }));
 };
 
 $('btn-send').onclick = sendChat;

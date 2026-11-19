@@ -209,6 +209,12 @@ func (c *Client) handle(m *Manager, data []byte) {
 		}
 		c.room.handleFire(c, msg)
 
+	case "rematch":
+		if c.room == nil {
+			return
+		}
+		c.room.handleRematch(c)
+
 	case "chat":
 		if c.room == nil {
 			return

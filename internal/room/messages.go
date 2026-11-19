@@ -131,3 +131,15 @@ type chatMsg struct {
 type replacedMsg struct {
 	Type string `json:"type"` // replaced
 }
+
+// timeoutMsg — время на ход вышло, ход перешёл. YouTurn=true у того,
+// чей теперь ход.
+type timeoutMsg struct {
+	Type    string `json:"type"` // timeout
+	YouTurn bool   `json:"youTurn"`
+}
+
+// rematchMsg — реванш: комната вернулась к расстановке.
+type rematchMsg struct {
+	Type string `json:"type"` // rematch
+}

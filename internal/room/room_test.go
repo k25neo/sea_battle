@@ -15,6 +15,19 @@ func testClient() *Client {
 
 func waitFor(t *testing.T, c *Client, typ string) map[string]any {
 	t.Helper()
+	return waitForWithin(t, c, typ, 0)
+}
+
+// waitForWithin ждёт сообщения typ; timeout > 0 разрешает дождаться
+// асинхронных событий (таймер хода), 0 — только уже лежащее в буфере.
+func waitForWithin(t *testing.T, c *Client, typ string, timeout time.Duration) map[string]any {
+	t.Helper()
+	var deadline <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		deadline = timer.C // nil-кейс в select просто не участвует
+	}
 	for {
 		select {
 		case data, ok := <-c.send:
@@ -28,7 +41,7 @@ func waitFor(t *testing.T, c *Client, typ string) map[string]any {
 			if m["type"] == typ {
 				return m
 			}
-		default:
+		case <-deadline:
 			t.Fatalf("сообщение %s не найдено в буфере", typ)
 		}
 	}
@@ -120,6 +133,75 @@ func TestCreatorPlacesBeforeGuest(t *testing.T) {
 	if sa["youTurn"] != true || sb["youTurn"] != false {
 		t.Errorf("ход должен быть у хозяина: %v %v", sa, sb)
 	}
+}
+
+func TestTurnTimerPassesTurn(t *testing.T) {
+	old := turnTime
+	turnTime = 80 * time.Millisecond
+	defer func() { turnTime = old }()
+
+	m := NewManager()
+	r := m.Create()
+	a, b := testClient(), testClient()
+	r.addPlayer(a, "А")
+	r.addPlayer(b, "Б")
+	r.handlePlace(a, placeMsg{Fleet: testFleet()})
+	r.handlePlace(b, placeMsg{Fleet: testFleet()})
+	waitFor(t, a, "start")
+	waitFor(t, b, "start")
+
+	// Никто не стреляет: время стороны 0 истекает, ход переходит к Б.
+	ta := waitForWithin(t, a, "timeout", 2*time.Second)
+	if ta["youTurn"] != false {
+		t.Errorf("А: ход должен был уйти, получено %v", ta)
+	}
+	tb := waitForWithin(t, b, "timeout", 2*time.Second)
+	if tb["youTurn"] != true {
+		t.Errorf("Б: ход должен был прийти, получено %v", tb)
+	}
+	r.stopTimers()
+}
+
+func TestRematchResetsRoom(t *testing.T) {
+	m := NewManager()
+	r := m.Create()
+	a, b := testClient(), testClient()
+	r.addPlayer(a, "А")
+	r.addPlayer(b, "Б")
+	r.handlePlace(a, placeMsg{Fleet: testFleet()})
+	r.handlePlace(b, placeMsg{Fleet: testFleet()})
+	waitFor(t, a, "start")
+	waitFor(t, b, "start")
+
+	// Игра окончена (финал эмулируем состоянием — топить весь флот долго).
+	r.mu.Lock()
+	r.state = stateFinished
+	r.mu.Unlock()
+
+	r.handleRematch(a)
+	if waitFor(t, a, "rematch")["type"] != "rematch" {
+		t.Fatal("А не получил rematch")
+	}
+	waitFor(t, b, "rematch")
+	r.mu.Lock()
+	st, ready := r.state, r.players[0].ready
+	chat := len(r.chat)
+	r.mu.Unlock()
+	if st != statePlacing || ready {
+		t.Errorf("комната не вернулась к расстановке: %v ready=%v", st, ready)
+	}
+	if chat != 0 {
+		t.Errorf("после реванша чат должен быть очищен, осталось %d", chat)
+	}
+
+	// Новая партия: обе стороны расставляются снова — бой стартует ещё раз.
+	r.handlePlace(a, placeMsg{Fleet: testFleet()})
+	r.handlePlace(b, placeMsg{Fleet: testFleet()})
+	s := waitFor(t, a, "start")
+	if s["youTurn"] != true {
+		t.Errorf("после реванша должен ходить первый: %v", s)
+	}
+	r.stopTimers()
 }
 
 func TestChat(t *testing.T) {
