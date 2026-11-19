@@ -34,6 +34,11 @@ func newServer(m *room.Manager) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(m.Stats())
 	})
+	mux.HandleFunc("/api/rooms", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(m.OpenRooms(""))
+	})
 	fileServer := http.FileServer(http.Dir("web"))
 	mux.Handle("/", fileServer)
 

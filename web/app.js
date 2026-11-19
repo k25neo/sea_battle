@@ -645,6 +645,34 @@ function leaveToJoin(code) {
   connect({ type: 'join', code, name: $('name-input').value.trim() || 'Игрок' });
 }
 
+// ---------- Открытые комнаты на главной ----------
+
+async function loadMenuRooms() {
+  const box = $('menu-rooms');
+  try {
+    const resp = await fetch(new URL('api/rooms', location.href).href);
+    var rooms = await resp.json();
+  } catch (e) {
+    rooms = [];
+  }
+  if (phase !== 'menu' || !Array.isArray(rooms) || !rooms.length) {
+    box.classList.add('hidden');
+    return;
+  }
+  box.classList.remove('hidden');
+  const inner = $('menu-rooms-list');
+  inner.innerHTML = '';
+  for (const r of rooms) {
+    const b = document.createElement('button');
+    b.textContent = `${r.code} · ${r.host}`;
+    b.onclick = () => {
+      quickMatch = false;
+      connect({ type: 'join', code: r.code, name: $('name-input').value.trim() || 'Игрок' });
+    };
+    inner.appendChild(b);
+  }
+}
+
 // ---------- Статистика сервера ----------
 
 async function loadStats() {
@@ -652,7 +680,6 @@ async function loadStats() {
     const resp = await fetch(new URL('api/stats', location.href).href);
     const s = await resp.json();
     const parts = [`👥 ${s.playersOnline} в сети`, `⚔️ боёв сейчас: ${s.playing}`];
-    if (s.waiting > 0) parts.push(`⏳ ждут соперника: ${s.waiting}`);
     if (s.gamesFinished > 0) parts.push(`сыграно партий: ${s.gamesFinished}`);
     $('stats-line').textContent = parts.join(' · ');
   } catch (e) {
@@ -681,6 +708,8 @@ if (session && session.token) {
 
 loadStats();
 setInterval(loadStats, 30000);
+loadMenuRooms();
+setInterval(loadMenuRooms, 15000);
 
 // Пока ждём соперника в лобби — освежаем витрину открытых комнат.
 setInterval(() => {

@@ -202,4 +202,39 @@ func TestE2EStatsEndpoint(t *testing.T) {
 	}
 }
 
+// GET /api/rooms — публичный список комнат, ожидающих соперника.
+func TestE2EOpenRoomsHTTP(t *testing.T) {
+	m := room.NewManager()
+	srv := httptest.NewServer(newServer(m))
+	defer srv.Close()
+
+	empty, err := http.Get(srv.URL + "/api/rooms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var none []map[string]any
+	json.NewDecoder(empty.Body).Decode(&none)
+	empty.Body.Close()
+	if len(none) != 0 {
+		t.Errorf("на старте список пуст: %v", none)
+	}
+
+	a := dial(t, srv.URL)
+	send(t, a, map[string]any{"type": "find", "name": "Ждущий"})
+	readUntil(t, a, "room")
+
+	resp, err := http.Get(srv.URL + "/api/rooms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var open []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&open); err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || open[0]["host"] != "Ждущий" {
+		t.Fatalf("комната не видна в /api/rooms: %v", open)
+	}
+}
+
 func c(x, y int) map[string]any { return map[string]any{"x": x, "y": y} }

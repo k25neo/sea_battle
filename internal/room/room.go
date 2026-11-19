@@ -448,7 +448,7 @@ func (m *Manager) OpenRooms(exclude string) []OpenRoom {
 		rooms = append(rooms, r)
 	}
 	m.mu.Unlock()
-	var out []OpenRoom
+	out := []OpenRoom{}
 	for _, r := range rooms {
 		if r.code == exclude {
 			continue
