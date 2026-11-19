@@ -102,6 +102,26 @@ func TestFindSkipsPrivateAndDead(t *testing.T) {
 	}
 }
 
+func TestCreatorPlacesBeforeGuest(t *testing.T) {
+	// Создатель жмёт «В бой!» до прихода гостя: сервер обязан принять
+	// флот и начать бой сразу, как только гость тоже будет готов.
+	m := NewManager()
+	r := m.Create()
+	a := testClient()
+	r.addPlayer(a, "Хозяин")
+	r.handlePlace(a, placeMsg{Fleet: testFleet()})
+	waitFor(t, a, "placed")
+
+	b := testClient()
+	r.addPlayer(b, "Гость")
+	r.handlePlace(b, placeMsg{Fleet: testFleet()})
+	sa := waitFor(t, a, "start")
+	sb := waitFor(t, b, "start")
+	if sa["youTurn"] != true || sb["youTurn"] != false {
+		t.Errorf("ход должен быть у хозяина: %v %v", sa, sb)
+	}
+}
+
 func TestChat(t *testing.T) {
 	m := NewManager()
 	r := m.Create()

@@ -113,6 +113,7 @@ func (r *Room) addPlayer(c *Client, name string) (int, error) {
 			if r.players[1-i] != nil {
 				r.state = statePlacing
 				r.stopTimers()
+				r.tryStart()
 			}
 			return i, nil
 		}
@@ -152,6 +153,7 @@ func (r *Room) joinIfOpen(c *Client, name string) bool {
 		if p == nil {
 			r.fillSlot(i, c, name)
 			r.state = statePlacing
+			r.tryStart()
 			return true
 		}
 	}
@@ -256,7 +258,9 @@ func (r *Room) scheduleCleanup() {
 func (r *Room) handlePlace(c *Client, msg placeMsg) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.state != statePlacing {
+	// Расставлять корабли можно и в ожидании второго игрока: создатель,
+	// нажавший «В бой!» до прихода гостя, иначе повис бы в мнимой готовности.
+	if r.state != stateWaiting && r.state != statePlacing {
 		c.sendJSON(errorMsg{Type: "error", Message: "сейчас нельзя расставлять корабли"})
 		return
 	}
@@ -267,17 +271,22 @@ func (r *Room) handlePlace(c *Client, msg placeMsg) {
 	}
 	p.ready = true
 	c.sendJSON(placedMsg{Type: "placed"})
-	other := r.opponentOf(p)
-	if other == nil || !other.ready {
+	r.tryStart()
+}
+
+// tryStart начинает бой, если оба игрока на месте и их флоты готовы.
+// Вызывается с захваченным r.mu.
+func (r *Room) tryStart() {
+	a, b := r.players[0], r.players[1]
+	if a == nil || b == nil || !a.ready || !b.ready || r.state > statePlacing {
 		return
 	}
-	// Оба готовы — начинаем бой; первым ходит игрок 0.
 	r.state = statePlaying
 	r.turn = 0
 	r.m.gamesStarted.Add(1)
-	for i, pl := range r.players {
-		if pl.c != nil {
-			pl.c.sendJSON(startMsg{Type: "start", YouTurn: r.turn == i})
+	for i, p := range r.players {
+		if p.c != nil {
+			p.c.sendJSON(startMsg{Type: "start", YouTurn: r.turn == i})
 		}
 	}
 }

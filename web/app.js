@@ -291,7 +291,7 @@ function setPlacementStatus(text) {
 
 function showOpponent(name) {
   oppName = name || '';
-  $('opp-name-own').textContent = oppName ? `(${oppName})` : '';
+  $('opp-name-own').textContent = ''; // на своём поле имя соперника не к месту
   $('opp-name-enemy').textContent = oppName ? `(${oppName})` : '';
 }
 
