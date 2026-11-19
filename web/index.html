@@ -25,6 +25,9 @@
         <input id="join-code" maxlength="5" placeholder="Код комнаты" autocomplete="off">
         <button id="btn-join">Присоединиться</button>
       </div>
+      <div class="row">
+        <button id="btn-leaders">🏆 Таблица лидеров</button>
+      </div>
       <div id="menu-rooms" class="menu-rooms hidden">
         <div class="or-title">⏳ Ждут соперника — присоединяйся:</div>
         <div id="menu-rooms-list"></div>
@@ -94,6 +97,17 @@
   </section>
 
   <!-- Финал -->
+  <!-- Таблица лидеров -->
+  <section id="screen-leaders" class="screen hidden">
+    <div class="panel">
+      <h2>🏆 Таблица лидеров</h2>
+      <div id="leaders-list" class="leaders">Загружаем…</div>
+      <div class="row">
+        <button id="btn-leaders-back">← В меню</button>
+      </div>
+    </div>
+  </section>
+
   <div id="overlay" class="overlay hidden">
     <div class="panel">
       <h2 id="overlay-title"></h2>

@@ -7,14 +7,18 @@ import "seabattle/internal/game"
 // --- Сообщения клиента ---
 
 type createMsg struct {
-	Type string `json:"type"` // create
-	Name string `json:"name"`
+	Type    string `json:"type"` // create
+	Name    string `json:"name"`
+	VkID    int64  `json:"vkId,omitempty"`    // из VKWebAppGetUserInfo, 0 — вне ВК
+	GuestID string `json:"guestId,omitempty"` // постоянный id гостя (localStorage)
 }
 
 type joinMsg struct {
-	Type string `json:"type"` // join
-	Code string `json:"code"`
-	Name string `json:"name"`
+	Type    string `json:"type"` // join
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	VkID    int64  `json:"vkId,omitempty"`
+	GuestID string `json:"guestId,omitempty"`
 }
 
 type placeMsg struct {
@@ -63,8 +67,10 @@ type shotMsg struct {
 }
 
 type gameOverMsg struct {
-	Type   string `json:"type"` // game_over
-	YouWon bool   `json:"youWon"`
+	Type     string `json:"type"` // game_over
+	YouWon   bool   `json:"youWon"`
+	Elo      int    `json:"elo,omitempty"`      // рейтинг после партии (0 — рейтинга нет)
+	EloDelta int    `json:"eloDelta,omitempty"` // сколько принесла эта победа/поражение
 }
 
 type errorMsg struct {

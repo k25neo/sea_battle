@@ -2,10 +2,12 @@ package room
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"seabattle/internal/game"
+	"seabattle/internal/store"
 )
 
 // testClient — клиент без реального соединения: сообщения копятся в буфере send.
@@ -132,6 +134,34 @@ func TestCreatorPlacesBeforeGuest(t *testing.T) {
 	sb := waitFor(t, b, "start")
 	if sa["youTurn"] != true || sb["youTurn"] != false {
 		t.Errorf("ход должен быть у хозяина: %v %v", sa, sb)
+	}
+}
+
+// Вход в комнату с guestId обязан зарегистрировать профиль — иначе
+// рейтинга у партии не будет.
+func TestProfileRegisteredOnJoin(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := NewManager()
+	m.SetStore(st)
+
+	r := m.Create()
+	a := testClient()
+	a.guestID = "aaa-111"
+	if _, err := r.addPlayer(a, "А"); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	pid := r.players[0].pid
+	r.mu.Unlock()
+	if pid != "g:aaa-111" {
+		t.Errorf("профиль не привязан: %q", pid)
+	}
+	if _, me, _, _ := st.Leaders(10, "g:aaa-111", 0); me == nil {
+		t.Error("профиль не виден в сторе")
 	}
 }
 

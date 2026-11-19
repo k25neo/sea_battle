@@ -5,11 +5,17 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/gorilla/websocket"
 
 	"seabattle/internal/room"
+	"seabattle/internal/store"
 )
 
 var upgrader = websocket.Upgrader{
@@ -39,6 +45,17 @@ func newServer(m *room.Manager) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(m.OpenRooms(""))
 	})
+	mux.HandleFunc("/api/leaders", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		limit := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		json.NewEncoder(w).Encode(m.Leaders(limit, r.URL.Query().Get("me")))
+	})
 	fileServer := http.FileServer(http.Dir("web"))
 	mux.Handle("/", fileServer)
 
@@ -54,10 +71,37 @@ func newServer(m *room.Manager) http.Handler {
 
 func main() {
 	addr := flag.String("addr", ":8080", "адрес сервера")
+	statsPath := flag.String("stats", "stats.json", "файл счётчиков партий (пусто — не сохранять)")
+	dbPath := flag.String("db", "seabattle.db", "база профилей и рейтинга (пусто — без рейтинга)")
 	flag.Parse()
 
+	m := room.NewManager()
+	if *dbPath != "" {
+		st, err := store.Open(*dbPath)
+		if err != nil {
+			log.Fatalf("не открыл базу %s: %v", *dbPath, err)
+		}
+		m.SetStore(st)
+		defer st.Close()
+	}
+	if *statsPath != "" {
+		m.LoadCounters(*statsPath)
+		done := make(chan struct{})
+		go m.RunCountersKeeper(*statsPath, 30*time.Second, done)
+		// systemd шлёт SIGTERM при restart: сохраним последние счётчики,
+		// рестарт не съест сыгранные партии.
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			s := <-sig
+			log.Printf("сигнал %s, сохраняю счётчики и выхожу", s)
+			close(done)
+			os.Exit(0)
+		}()
+	}
+
 	log.Printf("Морской бой: http://localhost%s", *addr)
-	if err := http.ListenAndServe(*addr, newServer(room.NewManager())); err != nil {
+	if err := http.ListenAndServe(*addr, newServer(m)); err != nil {
 		log.Fatal(err)
 	}
 }

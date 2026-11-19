@@ -263,3 +263,8 @@ button.primary {
     grid-template-rows: 18px repeat(10, minmax(26px, 8vw));
   }
 }
+
+/* Таблица лидеров */
+.leaders { margin: 8px 0 14px; }
+.leader-row { padding: 7px 6px; border-bottom: 1px solid rgba(255,255,255,.08); font-size: 15px; }
+.leader-row.me { border-bottom: none; border-top: 1px solid rgba(122,197,255,.35); margin-top: 6px; color: #7ac5ff; }

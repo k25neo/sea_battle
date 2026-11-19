@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"seabattle/internal/game"
+	"seabattle/internal/store"
 )
 
 const (
@@ -34,6 +35,7 @@ var (
 // player — участник комнаты; переживает обрыв соединения.
 type player struct {
 	name     string
+	pid      string // id профиля в сторе ("" — аноним без профиля)
 	board    *game.Board
 	ready    bool
 	token    string
@@ -196,7 +198,7 @@ func (r *Room) addPlayer(c *Client, name string) (int, error) {
 
 // fillSlot ставит нового игрока в слот (вызывать под r.mu).
 func (r *Room) fillSlot(i int, c *Client, name string) {
-	r.players[i] = &player{name: name, board: game.NewBoard(), token: newToken(), c: c}
+	r.players[i] = &player{name: name, pid: r.m.ensureProfile(c, name), board: game.NewBoard(), token: newToken(), c: c}
 	r.attach(c, i)
 }
 
@@ -402,9 +404,20 @@ func (r *Room) handleFire(c *Client, msg fireMsg) {
 	if defender.board.AllSunk() {
 		r.state = stateFinished
 		r.m.gamesFinished.Add(1)
-		shooter.c.sendJSON(gameOverMsg{Type: "game_over", YouWon: true})
+		win := gameOverMsg{Type: "game_over", YouWon: true}
+		lose := gameOverMsg{Type: "game_over", YouWon: false}
+		// Рейтинг пишем синхронно: локальный SQLite — миллисекунда, зато
+		// «+16» на экране гарантированно совпадёт с записанным профилем.
+		if r.m.store != nil && shooter.pid != "" && defender.pid != "" {
+			wElo, wDelta, lElo, lDelta, err := r.m.store.RecordGame(shooter.pid, defender.pid)
+			if err == nil && wElo > 0 {
+				win.Elo, win.EloDelta = wElo, wDelta
+				lose.Elo, lose.EloDelta = lElo, lDelta
+			}
+		}
+		shooter.c.sendJSON(win)
 		if defender.c != nil {
-			defender.c.sendJSON(gameOverMsg{Type: "game_over", YouWon: false})
+			defender.c.sendJSON(lose)
 		}
 		r.scheduleCleanup()
 		return
@@ -517,11 +530,29 @@ type Manager struct {
 	startedAt     time.Time
 	gamesStarted  atomic.Int64 // партии, в которых оба были готовы
 	gamesFinished atomic.Int64 // партии, доигранные до победы
+
+	store *store.Store // профили и ЭЛО; nil — рейтинга нет (тесты, лёгкий запуск)
 }
 
 // NewManager создаёт пустой менеджер комнат.
 func NewManager() *Manager {
 	return &Manager{rooms: make(map[string]*Room), startedAt: time.Now()}
+}
+
+// SetStore подключает базу профилей; без неё игра живёт как жила.
+func (m *Manager) SetStore(s *store.Store) { m.store = s }
+
+// ensureProfile регистрирует вошедшего игрока; ошибки хранилища не должны
+// ломать игру — игрок просто останется без рейтинга.
+func (m *Manager) ensureProfile(c *Client, name string) string {
+	if m.store == nil || (c.vkID == 0 && c.guestID == "") {
+		return ""
+	}
+	pid, err := m.store.EnsureProfile(c.vkID, c.guestID, name)
+	if err != nil {
+		return ""
+	}
+	return pid
 }
 
 const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

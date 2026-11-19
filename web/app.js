@@ -22,6 +22,24 @@ function saveSession(s) {
   else sessionStorage.removeItem(SS_KEY);
 }
 
+// Личность игрока для профилей и рейтинга: VK ID в кадре ВК, иначе
+// постоянный «гостевой» id в localStorage (тот же браузер = тот же игрок).
+const GUEST_KEY = '***';
+let vkUserID = 0;
+function guestID() {
+  try {
+    let g = localStorage.getItem(GUEST_KEY);
+    if (!g) {
+      g = crypto.randomUUID ? crypto.randomUUID()
+        : 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(GUEST_KEY, g);
+    }
+    return g;
+  } catch (e) { return ''; }
+}
+function ident() { return { vkId: vkUserID || 0, guestId: guestID() }; }
+function profileID() { return vkUserID ? 'vk:' + vkUserID : (guestID() ? 'g:' + guestID() : ''); }
+
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let rejoinPending = false;
@@ -435,8 +453,13 @@ function handleMessage(msg) {
       vk("VKWebAppInterceptorsStop");
       stopReconnect();
       saveSession(null);
+      let overText = msg.youWon ? 'Весь флот противника потоплен.' : 'Ваш флот уничтожен.';
+      if (typeof msg.elo === 'number' && msg.elo > 0) {
+        overText += ' Рейтинг: ' + msg.elo +
+          (msg.eloDelta ? (msg.eloDelta > 0 ? ' (+' + msg.eloDelta + ')' : ' (' + msg.eloDelta + ')') : '') + '.';
+      }
       showOverlay(msg.youWon ? '🏆 Победа!' : '💥 Поражение',
-        msg.youWon ? 'Весь флот противника потоплен.' : 'Ваш флот уничтожен.',
+        overText,
         ws && ws.readyState === WebSocket.OPEN); // комната жива ещё пару минут — можно реванш
       buzz(msg.youWon ? 300 : [100, 80, 100, 80, 250]);
       break;
@@ -571,7 +594,13 @@ function connect(sendObj) {
   const u = new URL('ws', location.href);
   u.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(u.href);
-  ws.onopen = () => ws.send(JSON.stringify(sendObj));
+  ws.onopen = () => {
+    // Вход в комнату — заодно паспорт: по нему сервер ведёт профиль.
+    if (sendObj.type === 'create' || sendObj.type === 'join' || sendObj.type === 'find') {
+      Object.assign(sendObj, ident());
+    }
+    ws.send(JSON.stringify(sendObj));
+  };
   ws.onmessage = (e) => {
     try { handleMessage(JSON.parse(e.data)); } catch (err) {}
   };
@@ -611,7 +640,7 @@ function sessionGone() {
 // ---------- Экраны и прочее ----------
 
 function showScreen(name) {
-  for (const s of ['menu', 'placement', 'battle']) {
+  for (const s of ['menu', 'placement', 'battle', 'leaders']) {
     $('screen-' + s).classList.toggle('hidden', s !== name);
   }
 }
@@ -723,6 +752,48 @@ $('btn-rematch').onclick = () => {
   $('btn-rematch').disabled = true;
   ws.send(JSON.stringify({ type: 'rematch' }));
 };
+
+// ---------- Таблица лидеров ----------
+
+$('btn-leaders').onclick = () => {
+  showScreen('leaders');
+  loadLeaders();
+};
+$('btn-leaders-back').onclick = () => showScreen('menu');
+
+async function loadLeaders() {
+  const el = $('leaders-list');
+  el.textContent = 'Загружаем…';
+  let d = null;
+  try {
+    const url = new URL('api/leaders?limit=20&me=' + encodeURIComponent(profileID()), location.href).href;
+    d = await (await fetch(url)).json();
+  } catch (e) {}
+  el.innerHTML = '';
+  const rows = (d && d.leaders) || [];
+  const medals = ['🥇', '🥈', '🥉'];
+  for (const p of rows) {
+    const div = document.createElement('div');
+    div.className = 'leader-row';
+    div.textContent = `${medals[p.rank - 1] || p.rank + '.'} ${p.name} — ${p.elo}` +
+      ` · ${p.wins}/${p.games}`;
+    el.appendChild(div);
+  }
+  if (!rows.length && !(d && d.me)) {
+    el.textContent = 'Топ пустой: в него попадают после 3 сыгранных партий. Самое время!';
+    return;
+  }
+  const me = document.createElement('div');
+  me.className = 'leader-row me';
+  if (d && d.me) {
+    me.textContent = d.me.rank
+      ? `Ты: ${d.me.elo} · ${d.me.wins}/${d.me.games} · ${d.me.rank}-е место`
+      : `Твой рейтинг: ${d.me.elo} · сыграно ${d.me.games}. Место даётся после 3 партий.`;
+  } else {
+    me.textContent = 'Сыграй партию — профиль появится в таблице.';
+  }
+  el.appendChild(me);
+}
 
 $('btn-send').onclick = sendChat;
 $('chat-input').addEventListener('keydown', (e) => {
@@ -849,6 +920,7 @@ async function initVK() {
   });
   vk("VKWebAppDisableSwipeBack"); // назад свайпом — не из боя
   const me = await vk("VKWebAppGetUserInfo");
+  if (me && me.id) vkUserID = me.id; // профиль и рейтинг привязываются к VK ID
   try {
     fetch(new URL('api/vkstat', location.href).href +
           '?user=' + encodeURIComponent(me && me.first_name || 'null'));

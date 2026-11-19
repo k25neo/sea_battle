@@ -23,6 +23,9 @@ type Client struct {
 	room  *Room
 	side  int
 	token string // сессия игрока в комнате
+
+	vkID    int64  // VK ID из кадра приложения (0 — вне ВК)
+	guestID string // постоянный идентификатор гостя из localStorage
 }
 
 func newClient(conn *websocket.Conn) *Client {
@@ -102,6 +105,7 @@ func (c *Client) handle(m *Manager, data []byte) {
 			return
 		}
 		r := m.Create()
+		c.vkID, c.guestID = msg.VkID, msg.GuestID
 		side, err := r.addPlayer(c, sanitizeName(msg.Name))
 		if err != nil {
 			m.remove(r.code)
@@ -124,6 +128,7 @@ func (c *Client) handle(m *Manager, data []byte) {
 			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
 			return
 		}
+		c.vkID, c.guestID = msg.VkID, msg.GuestID
 		side, err := r.addPlayer(c, sanitizeName(msg.Name))
 		if err != nil {
 			c.sendJSON(errorMsg{Type: "error", Message: err.Error()})
@@ -136,10 +141,11 @@ func (c *Client) handle(m *Manager, data []byte) {
 		if c.room != nil {
 			return
 		}
-		var msg createMsg // та же форма: {type, name}
+		var msg createMsg // та же форма: {type, name, vkId, guestId}
 		if err := json.Unmarshal(data, &msg); err != nil {
 			return
 		}
+		c.vkID, c.guestID = msg.VkID, msg.GuestID
 		r := m.Find(c, sanitizeName(msg.Name))
 		if r == nil {
 			c.sendJSON(errorMsg{Type: "error", Message: "не удалось создать комнату"})
