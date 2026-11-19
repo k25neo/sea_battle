@@ -300,7 +300,7 @@ function handleMessage(msg) {
       break;
 
     case 'rooms':
-      if (phase === 'placement' && !fleetSent) renderOpenRooms(msg.open);
+      if (phase === 'placement' && oppName === '') renderOpenRooms(msg.open);
       break;
 
     case 'opponent':
@@ -312,7 +312,6 @@ function handleMessage(msg) {
       break;
 
     case 'placed':
-      $('open-rooms').classList.add('hidden');
       setPlacementStatus('Флот готов, ждём соперника…');
       break;
 
@@ -616,12 +615,16 @@ document.addEventListener('keydown', (e) => {
 
 function renderOpenRooms(list) {
   const box = $('open-rooms'), inner = $('open-rooms-list');
-  if (!list || !list.length) {
-    box.classList.add('hidden');
-    return;
-  }
+  if (phase !== 'placement') { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
   inner.innerHTML = '';
+  if (!list || !list.length) {
+    const d = document.createElement('div');
+    d.className = 'or-empty';
+    d.textContent = 'Пока никто не ждёт — ждите здесь, соперник появится в этом списке.';
+    inner.appendChild(d);
+    return;
+  }
   for (const r of list) {
     const b = document.createElement('button');
     b.textContent = `${r.code} · ${r.host}`;
@@ -649,6 +652,7 @@ async function loadStats() {
     const resp = await fetch(new URL('api/stats', location.href).href);
     const s = await resp.json();
     const parts = [`👥 ${s.playersOnline} в сети`, `⚔️ боёв сейчас: ${s.playing}`];
+    if (s.waiting > 0) parts.push(`⏳ ждут соперника: ${s.waiting}`);
     if (s.gamesFinished > 0) parts.push(`сыграно партий: ${s.gamesFinished}`);
     $('stats-line').textContent = parts.join(' · ');
   } catch (e) {
@@ -680,8 +684,8 @@ setInterval(loadStats, 30000);
 
 // Пока ждём соперника в лобби — освежаем витрину открытых комнат.
 setInterval(() => {
-  if (phase === 'placement' && !fleetSent && oppName === '' &&
+  if (phase === 'placement' && oppName === '' &&
       ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'list' }));
   }
-}, 10000);
+}, 5000);

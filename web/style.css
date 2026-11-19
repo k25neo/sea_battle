@@ -188,6 +188,7 @@ button.primary {
 
 .open-rooms { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .or-title { font-size: 13px; opacity: 0.7; }
+.or-empty { font-size: 12px; opacity: 0.55; margin-top: 6px; }
 .open-rooms button { display: block; width: 100%; margin-top: 6px; font-size: 13px; text-align: left; }
 
 .fship { display: flex; gap: 2px; opacity: 0.35; }

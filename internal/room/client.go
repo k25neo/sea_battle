@@ -109,6 +109,7 @@ func (c *Client) handle(m *Manager, data []byte) {
 			return
 		}
 		c.sendJSON(roomMsg{Type: "room", Code: r.code, Side: side, Token: c.token})
+		c.sendJSON(openRoomsMsg{Type: "rooms", Open: m.OpenRooms(r.code)})
 
 	case "join":
 		if c.room != nil {
