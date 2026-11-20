@@ -639,6 +639,7 @@ function sessionGone() {
 // ---------- Экраны и прочее ----------
 
 function showScreen(name) {
+  document.body.dataset.screen = name; // фон за экраном следит за переключением
   for (const s of ['menu', 'placement', 'battle', 'leaders']) {
     $('screen-' + s).classList.toggle('hidden', s !== name);
   }

@@ -12,6 +12,21 @@
 
 * { box-sizing: border-box; }
 
+/* Фоновые картинки: слой под интерфейсом. Цвет — подстраховка, пока
+   jpg грузится (или если его нет). Картинка берётся по экрану:
+   меню — «лунное море», бой/расстановка — «морская карта». */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg) url('img/bg-menu.jpg') center / cover no-repeat;
+}
+body[data-screen="placement"]::before,
+body[data-screen="battle"]::before {
+  background-image: url('img/bg-battle.jpg');
+}
+
 body {
   margin: 0;
   padding: 24px;
