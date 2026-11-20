@@ -503,8 +503,7 @@ function handleMessage(msg) {
       if (joinViaLink) {
         joinViaLink = false;
         showScreen('menu');
-        $('join-code').value = inviteCode || '';
-        flashToast(msg.message + ' — попробуйте ввести код вручную');
+        flashToast(msg.message + ' — попросите у друга новую ссылку');
         break;
       }
       flashToast(msg.message);
@@ -700,19 +699,6 @@ $('btn-find').onclick = () => {
   const name = $('name-input').value.trim() || 'Игрок';
   quickMatch = true;
   connect({ type: 'find', name });
-};
-
-$('btn-create').onclick = () => {
-  const name = $('name-input').value.trim() || 'Игрок';
-  quickMatch = false;
-  connect({ type: 'create', name });
-};
-
-$('btn-join').onclick = () => {
-  const name = $('name-input').value.trim() || 'Игрок';
-  const code = $('join-code').value.trim().toUpperCase();
-  if (!code) { flashToast('Введите код комнаты'); return; }
-  connect({ type: 'join', code, name });
 };
 
 $('btn-rotate').onclick = () => {
